@@ -12,6 +12,7 @@ import {
   Easing,
   Modal,
 } from 'react-native';
+import { Account, Document } from '../types';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -25,7 +26,6 @@ import { CategoryBadge, ProviderBadge } from '../components/ui/Badge';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
-import { Document } from '../types';
 import { getAllAccounts, updateAccountTokens } from '../database/accounts';
 import { getRecentDocuments, getDocumentStats, getStarredDocuments } from '../database/documents';
 import { signInWithGoogle, signInWithMicrosoft } from '../services/authService';
@@ -51,10 +51,22 @@ export default function HomeScreen() {
     setStats,
     settings,
     updateAccount,
+    updateSetting,
   } = useAppStore();
 
   const [refreshing, setRefreshing] = React.useState(false);
   const [syncRangeModal, setSyncRangeModal] = React.useState<string | null>(null);
+  const [syncFromDate, setSyncFromDate] = React.useState<Date>(subDays(new Date(), 30));
+  const [syncToDate, setSyncToDate] = React.useState<Date>(new Date());
+  const [showFromPicker, setShowFromPicker] = React.useState(false);
+  const [showToPicker, setShowToPicker] = React.useState(false);
+  const [syncFileTypes, setSyncFileTypes] = React.useState<Record<string, boolean>>({
+    pdf: true,
+    images: true,
+    word: true,
+    excel: true,
+    xml: true,
+  });
 
   const loadData = useCallback(async () => {
     const [recent, starred, stats] = await Promise.all([
@@ -177,24 +189,35 @@ export default function HomeScreen() {
     }
   }, [accounts, handleSyncAccount]);
 
-  const handleSyncWithRange = useCallback(async (accountId: string, days: number | null) => {
+  const handleSyncWithCustomRange = useCallback(async (accountId: string) => {
     setSyncRangeModal(null);
     const acc = accounts.find(a => a.id === accountId);
     if (!acc) return;
 
-    // Build fresh account so the sync uses the new date — avoids stale closure issue
-    let freshAccount: Account = { ...acc };
-    if (days !== null) {
-      const newDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
-      freshAccount = { ...acc, syncFromDate: newDate, lastSyncAt: null };
-      // Persist to store and DB
-      updateAccount(accountId, { syncFromDate: newDate, lastSyncAt: null });
-      await import('../database/accounts').then(m => m.upsertAccount(freshAccount));
-    }
+    const newFromDate = format(syncFromDate, 'yyyy-MM-dd');
+    // Build allowed extensions from syncFileTypes
+    const extMap: Record<string, string[]> = {
+      pdf: ['pdf'],
+      images: ['jpg', 'jpeg', 'png', 'heic', 'webp'],
+      word: ['docx'],
+      excel: ['xlsx'],
+      xml: ['xml', 'txt'],
+    };
+    const allowedExts = Object.entries(syncFileTypes)
+      .filter(([, enabled]) => enabled)
+      .flatMap(([key]) => extMap[key] ?? []);
 
-    // Pass freshAccount directly so the correct syncFromDate / lastSyncAt is used
+    // Update allowed_extensions in DB settings
+    await import('../database/settings').then(m => m.setSetting('allowed_extensions', JSON.stringify(allowedExts)));
+    // Update in store too
+    if (settings) updateSetting('allowedExtensions' as any, allowedExts as any);
+
+    const freshAccount = { ...acc, syncFromDate: newFromDate, lastSyncAt: null };
+    updateAccount(accountId, { syncFromDate: newFromDate, lastSyncAt: null });
+    await import('../database/accounts').then(m => m.upsertAccount(freshAccount));
+
     await handleSyncAccount(accountId, freshAccount);
-  }, [accounts, handleSyncAccount, updateAccount]);
+  }, [accounts, syncFromDate, syncFileTypes, handleSyncAccount, updateAccount, settings]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -365,36 +388,186 @@ export default function HomeScreen() {
       </ScrollView>
 
       {/* Sync Range Modal */}
-      <Modal visible={!!syncRangeModal} transparent animationType="slide">
+      <Modal
+        visible={!!syncRangeModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSyncRangeModal(null)}
+      >
         <View style={styles.syncModalOverlay}>
           <View style={[styles.syncModalSheet, { backgroundColor: theme.surface }]}>
+            {/* Handle */}
             <View style={[styles.syncModalHandle, { backgroundColor: theme.border }]} />
-            <Text style={[styles.syncModalTitle, { color: theme.textPrimary }]}>Sincronizar cuenta</Text>
-            <Text style={[styles.syncModalSub, { color: theme.textMuted }]}>{accounts.find(a => a.id === syncRangeModal)?.email}</Text>
-            <Text style={[styles.syncModalLabel, { color: theme.textMuted }]}>ESCANEAR DESDE</Text>
-            {[
-              { label: 'Últimos 7 días', days: 7 },
-              { label: 'Últimos 30 días', days: 30 },
-              { label: 'Últimos 3 meses', days: 90 },
-              { label: 'Último año', days: 365 },
-              { label: 'Fecha configurada en ajustes', days: null },
-            ].map((opt) => (
-              <TouchableOpacity
-                key={String(opt.days)}
-                style={[styles.syncRangeOption, { borderColor: theme.border }]}
-                onPress={() => syncRangeModal && handleSyncWithRange(syncRangeModal, opt.days)}
-                activeOpacity={0.75}
-              >
-                <MaterialCommunityIcons name="calendar-clock" size={18} color={theme.primary} />
-                <Text style={[styles.syncRangeLabel, { color: theme.textPrimary }]}>{opt.label}</Text>
-                <MaterialCommunityIcons name="chevron-right" size={16} color={theme.textMuted} />
+
+            <Text style={[styles.syncModalTitle, { color: theme.textPrimary }]}>Configurar sincronización</Text>
+
+            {/* Quick presets */}
+            <Text style={[styles.syncSectionLabel, { color: theme.textSecondary }]}>RANGO RÁPIDO</Text>
+            <View style={styles.syncPresetRow}>
+              {[
+                { label: '7 días', days: 7 },
+                { label: '30 días', days: 30 },
+                { label: '3 meses', days: 90 },
+                { label: '1 año', days: 365 },
+              ].map((p) => (
+                <TouchableOpacity
+                  key={p.days}
+                  style={[styles.syncPresetChip, { borderColor: theme.primary, backgroundColor: theme.primarySubtle }]}
+                  onPress={() => {
+                    setSyncFromDate(subDays(new Date(), p.days));
+                    setSyncToDate(new Date());
+                  }}
+                >
+                  <Text style={[styles.syncPresetChipText, { color: theme.primary }]}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Custom date range */}
+            <Text style={[styles.syncSectionLabel, { color: theme.textSecondary }]}>RANGO PERSONALIZADO</Text>
+            <View style={[styles.syncDateRow, { borderColor: theme.border }]}>
+              <TouchableOpacity style={styles.syncDateField} onPress={() => setShowFromPicker(true)}>
+                <MaterialCommunityIcons name="calendar-start" size={16} color={theme.primary} />
+                <Text style={[styles.syncDateLabel, { color: theme.textSecondary }]}>Desde</Text>
+                <Text style={[styles.syncDateValue, { color: theme.textPrimary }]}>{format(syncFromDate, 'dd/MM/yyyy')}</Text>
               </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={[styles.syncModalCancel, { borderTopColor: theme.border }]} onPress={() => setSyncRangeModal(null)}>
-              <Text style={[styles.syncModalCancelText, { color: theme.textSecondary }]}>Cancelar</Text>
-            </TouchableOpacity>
+              <View style={[styles.syncDateDivider, { backgroundColor: theme.border }]} />
+              <TouchableOpacity style={styles.syncDateField} onPress={() => setShowToPicker(true)}>
+                <MaterialCommunityIcons name="calendar-end" size={16} color={theme.primary} />
+                <Text style={[styles.syncDateLabel, { color: theme.textSecondary }]}>Hasta</Text>
+                <Text style={[styles.syncDateValue, { color: theme.textPrimary }]}>{format(syncToDate, 'dd/MM/yyyy')}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* File type filter */}
+            <Text style={[styles.syncSectionLabel, { color: theme.textSecondary }]}>TIPOS DE ARCHIVO</Text>
+            <View style={styles.syncTypeGrid}>
+              {[
+                { key: 'pdf', label: 'PDF', icon: 'file-pdf-box', color: '#EF4444' },
+                { key: 'images', label: 'Imágenes', icon: 'image-outline', color: '#8B5CF6' },
+                { key: 'word', label: 'Word', icon: 'file-word-box', color: '#2563EB' },
+                { key: 'excel', label: 'Excel', icon: 'file-excel-box', color: '#16A34A' },
+                { key: 'xml', label: 'XML / TXT', icon: 'file-code-outline', color: '#F59E0B' },
+              ].map((t) => {
+                const enabled = syncFileTypes[t.key];
+                return (
+                  <TouchableOpacity
+                    key={t.key}
+                    style={[
+                      styles.syncTypeChip,
+                      {
+                        borderColor: enabled ? t.color : theme.border,
+                        backgroundColor: enabled ? t.color + '18' : theme.background,
+                      },
+                    ]}
+                    onPress={() => setSyncFileTypes(prev => ({ ...prev, [t.key]: !prev[t.key] }))}
+                  >
+                    <MaterialCommunityIcons name={t.icon as any} size={18} color={enabled ? t.color : theme.textMuted} />
+                    <Text style={[styles.syncTypeLabel, { color: enabled ? t.color : theme.textMuted }]}>{t.label}</Text>
+                    {enabled && <MaterialCommunityIcons name="check-circle" size={14} color={t.color} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Actions */}
+            <View style={styles.syncModalActions}>
+              <TouchableOpacity
+                style={[styles.syncCancelBtn, { borderColor: theme.border }]}
+                onPress={() => setSyncRangeModal(null)}
+              >
+                <Text style={[styles.syncCancelText, { color: theme.textSecondary }]}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.syncStartBtn, { backgroundColor: theme.primary }]}
+                onPress={() => syncRangeModal && handleSyncWithCustomRange(syncRangeModal)}
+              >
+                <MaterialCommunityIcons name="sync" size={16} color="#fff" />
+                <Text style={styles.syncStartText}>Sincronizar</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
+
+        {/* DateTimePicker for FROM date */}
+        {showFromPicker && (
+          <Modal transparent animationType="fade" onRequestClose={() => setShowFromPicker(false)}>
+            <View style={styles.datePickerOverlay}>
+              <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
+                <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha desde</Text>
+                {/* Date display */}
+                <View style={styles.datePickerManual}>
+                  {['Año', 'Mes', 'Día'].map((label, idx) => {
+                    const parts = [syncFromDate.getFullYear(), syncFromDate.getMonth() + 1, syncFromDate.getDate()];
+                    return (
+                      <View key={label} style={styles.datePartCol}>
+                        <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{label}</Text>
+                        <Text style={[styles.datePartValue, { color: theme.textPrimary, borderColor: theme.border }]}>
+                          {String(parts[idx]).padStart(2, '0')}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+                {/* Quick buttons */}
+                <View style={styles.datePickerPresets}>
+                  {[
+                    { label: 'Hace 1 semana', days: 7 },
+                    { label: 'Hace 30 días', days: 30 },
+                    { label: 'Hace 3 meses', days: 90 },
+                    { label: 'Hace 6 meses', days: 180 },
+                    { label: 'Hace 1 año', days: 365 },
+                  ].map(p => (
+                    <TouchableOpacity
+                      key={p.days}
+                      style={[styles.datePresetBtn, { borderColor: theme.border }]}
+                      onPress={() => { setSyncFromDate(subDays(new Date(), p.days)); setShowFromPicker(false); }}
+                    >
+                      <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TouchableOpacity
+                  style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
+                  onPress={() => setShowFromPicker(false)}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+        )}
+
+        {showToPicker && (
+          <Modal transparent animationType="fade" onRequestClose={() => setShowToPicker(false)}>
+            <View style={styles.datePickerOverlay}>
+              <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
+                <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha hasta</Text>
+                <View style={styles.datePickerPresets}>
+                  {[
+                    { label: 'Hoy', days: 0 },
+                    { label: 'Hace 1 semana', days: 7 },
+                    { label: 'Hace 30 días', days: 30 },
+                  ].map(p => (
+                    <TouchableOpacity
+                      key={p.days}
+                      style={[styles.datePresetBtn, { borderColor: theme.border }]}
+                      onPress={() => { setSyncToDate(subDays(new Date(), p.days)); setShowToPicker(false); }}
+                    >
+                      <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TouchableOpacity
+                  style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
+                  onPress={() => setShowToPicker(false)}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+        )}
       </Modal>
     </SafeAreaView>
   );
@@ -588,14 +761,47 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  syncModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  syncModalSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: Spacing.xl, paddingBottom: Spacing.xxxl, gap: Spacing.sm },
-  syncModalHandle: { width: 40, height: 4, backgroundColor: Colors.border, borderRadius: 2, alignSelf: 'center', marginBottom: Spacing.md },
-  syncModalTitle: { ...Typography.headingM, color: Colors.textPrimary },
-  syncModalSub: { ...Typography.caption, color: Colors.textMuted },
-  syncModalLabel: { ...Typography.caption, fontWeight: '700', color: Colors.textMuted, letterSpacing: 0.5, marginTop: Spacing.sm },
-  syncRangeOption: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.md, paddingHorizontal: Spacing.sm, borderRadius: BorderRadius.input, borderWidth: 1, borderColor: Colors.border },
-  syncRangeLabel: { ...Typography.bodyM, color: Colors.textPrimary, flex: 1 },
-  syncModalCancel: { alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.border },
-  syncModalCancelText: { ...Typography.bodyM, color: Colors.textSecondary },
+  // Sync modal redesign
+  syncModalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+  syncModalSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '90%' },
+  syncModalHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  syncModalTitle: { ...Typography.headingS, fontWeight: '700', marginBottom: 20, textAlign: 'center' },
+  syncSectionLabel: { ...Typography.caption, fontWeight: '700', letterSpacing: 1, marginBottom: 8, marginTop: 4 },
+
+  // Presets
+  syncPresetRow: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
+  syncPresetChip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
+  syncPresetChipText: { ...Typography.caption, fontWeight: '600' },
+
+  // Date range
+  syncDateRow: { flexDirection: 'row', borderWidth: 1, borderRadius: 12, marginBottom: 16, overflow: 'hidden' },
+  syncDateField: { flex: 1, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  syncDateDivider: { width: 1 },
+  syncDateLabel: { ...Typography.caption, flex: 0 },
+  syncDateValue: { ...Typography.bodyM, fontWeight: '600', flex: 1 },
+
+  // File type chips
+  syncTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
+  syncTypeChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1.5 },
+  syncTypeLabel: { ...Typography.caption, fontWeight: '600' },
+
+  // Actions
+  syncModalActions: { flexDirection: 'row', gap: 12 },
+  syncCancelBtn: { flex: 1, borderWidth: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  syncCancelText: { ...Typography.bodyM, fontWeight: '600' },
+  syncStartBtn: { flex: 2, borderRadius: 12, paddingVertical: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
+  syncStartText: { color: '#fff', ...Typography.bodyM, fontWeight: '700' },
+
+  // Date pickers
+  datePickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 },
+  datePickerCard: { borderRadius: 20, padding: 24, gap: 12 },
+  datePickerTitle: { ...Typography.headingS, fontWeight: '700', textAlign: 'center' },
+  datePickerManual: { flexDirection: 'row', justifyContent: 'center', gap: 16 },
+  datePartCol: { alignItems: 'center', gap: 4 },
+  datePartLabel: { ...Typography.caption },
+  datePartValue: { ...Typography.headingM, fontWeight: '700', borderBottomWidth: 2, paddingBottom: 4, minWidth: 50, textAlign: 'center' },
+  datePickerPresets: { gap: 8 },
+  datePresetBtn: { borderWidth: 1, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
+  datePresetText: { ...Typography.bodyM },
+  datePickerClose: { borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
 });

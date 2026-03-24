@@ -41,7 +41,9 @@ export default function DocumentViewerScreen() {
 
   const isPdf = fileExtension === 'pdf';
   const isImage = ['jpg', 'jpeg', 'png', 'heic', 'webp'].includes(fileExtension);
-  const isViewable = isPdf || isImage;
+  const isDocx = fileExtension === 'docx';
+  const isXlsx = ['xlsx', 'xls'].includes(fileExtension);
+  const isViewable = isPdf || isImage || isDocx || isXlsx;
   const ui = getFileTypeUI(fileExtension);
 
   useEffect(() => {
@@ -54,8 +56,8 @@ export default function DocumentViewerScreen() {
         }
         setFileExists(true);
 
-        // Read PDF as base64 on BOTH platforms (avoids iOS onLoadEnd bug with file:// URIs)
-        if (isPdf) {
+        // Read PDF/DOCX/XLSX as base64 on BOTH platforms (avoids iOS onLoadEnd bug with file:// URIs)
+        if (isPdf || isDocx || isXlsx) {
           const data = await FileSystem.readAsStringAsync(filePath, {
             encoding: FileSystem.EncodingType.Base64,
           });
@@ -67,7 +69,7 @@ export default function DocumentViewerScreen() {
       }
     }
     prepare();
-  }, [filePath, isPdf]);
+  }, [filePath, isPdf, isDocx, isXlsx]);
 
   const pdfJsHtml = useMemo(() => {
     if (!base64Data) return '';
@@ -130,6 +132,116 @@ pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
 </body>
 </html>`;
   }, [base64Data]);
+
+  const mammothHtml = useMemo(() => {
+    if (!base64Data || !isDocx) return '';
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #f8fafc; padding: 16px; font-family: -apple-system, Arial, sans-serif; font-size: 14px; color: #1e293b; line-height: 1.6; }
+h1,h2,h3,h4 { margin: 16px 0 8px 0; color: #0f172a; }
+p { margin-bottom: 10px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+td, th { border: 1px solid #e2e8f0; padding: 8px; font-size: 13px; }
+th { background: #f1f5f9; font-weight: 600; }
+ul, ol { padding-left: 20px; margin-bottom: 10px; }
+li { margin-bottom: 4px; }
+#loading { color: #64748b; text-align: center; padding: 60px 20px; font-size: 15px; }
+#error { color: #ef4444; text-align: center; padding: 60px 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="loading">⏳ Cargando documento Word...</div>
+<div id="error" style="display:none"></div>
+<div id="content"></div>
+<script>
+try {
+  const b64 = '${base64Data}';
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const arrayBuffer = bytes.buffer;
+  mammoth.convertToHtml({ arrayBuffer: arrayBuffer })
+    .then(function(result) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('content').innerHTML = result.value || '<p style="color:#64748b;text-align:center;padding:40px">Documento vacío o sin contenido de texto</p>';
+    })
+    .catch(function(err) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('error').textContent = 'Error al procesar: ' + err.message;
+    });
+} catch(e) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('error').style.display = 'block';
+  document.getElementById('error').textContent = 'Error: ' + e.message;
+}
+</script>
+</body>
+</html>`;
+  }, [base64Data, isDocx]);
+
+  const xlsxHtml = useMemo(() => {
+    if (!base64Data || !isXlsx) return '';
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #f0fdf4; font-family: -apple-system, Arial, sans-serif; font-size: 12px; }
+#loading { color: #64748b; text-align: center; padding: 60px 20px; font-size: 15px; }
+#error { color: #ef4444; text-align: center; padding: 60px 20px; font-size: 14px; }
+.sheet-tab { display: inline-block; padding: 6px 14px; background: #16a34a; color: white; font-size: 11px; font-weight: 600; border-radius: 4px 4px 0 0; margin: 8px 4px 0 8px; cursor: pointer; }
+.sheet-tab.active { background: #15803d; }
+.table-wrap { overflow-x: auto; padding: 0 8px 16px 8px; }
+table { border-collapse: collapse; width: max-content; min-width: 100%; background: white; }
+th { background: #dcfce7; color: #166534; font-weight: 700; border: 1px solid #86efac; padding: 6px 10px; font-size: 11px; white-space: nowrap; position: sticky; top: 0; }
+td { border: 1px solid #d1fae5; padding: 5px 10px; white-space: nowrap; color: #1e293b; font-size: 11px; }
+tr:nth-child(even) td { background: #f0fdf4; }
+</style>
+</head>
+<body>
+<div id="loading">⏳ Cargando hoja de cálculo...</div>
+<div id="error" style="display:none"></div>
+<div id="tabs"></div>
+<div id="content"></div>
+<script>
+try {
+  const b64 = '${base64Data}';
+  const wb = XLSX.read(b64, { type: 'base64' });
+  document.getElementById('loading').style.display = 'none';
+  const tabs = document.getElementById('tabs');
+  const content = document.getElementById('content');
+  function showSheet(name) {
+    const ws = wb.Sheets[name];
+    const html = XLSX.utils.sheet_to_html(ws, { editable: false });
+    content.innerHTML = '<div class="table-wrap">' + html + '</div>';
+    document.querySelectorAll('.sheet-tab').forEach(t => t.classList.toggle('active', t.dataset.name === name));
+  }
+  wb.SheetNames.forEach(function(name, i) {
+    const tab = document.createElement('span');
+    tab.className = 'sheet-tab' + (i === 0 ? ' active' : '');
+    tab.dataset.name = name;
+    tab.textContent = name;
+    tab.onclick = function() { showSheet(name); };
+    tabs.appendChild(tab);
+  });
+  if (wb.SheetNames.length > 0) showSheet(wb.SheetNames[0]);
+} catch(e) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('error').style.display = 'block';
+  document.getElementById('error').textContent = 'Error al procesar: ' + e.message;
+}
+</script>
+</body>
+</html>`;
+  }, [base64Data, isXlsx]);
 
   const handleOpenExternal = useCallback(async () => {
     try {
@@ -232,10 +344,60 @@ pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
       );
     }
 
-    // ─── Word, Excel, PPT, etc. — can't render natively ───
+    // ─── DOCX: Mammoth.js via CDN ───
+    if (isDocx && base64Data) {
+      return (
+        <View style={{ flex: 1 }}>
+          {webLoading && (
+            <View style={styles.webLoadingOverlay}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.statusText}>
+                Procesando Word...{'\n'}
+                <Text style={{ fontSize: 12, color: Colors.textMuted }}>Requiere conexión a internet</Text>
+              </Text>
+            </View>
+          )}
+          <WebView
+            source={{ html: mammothHtml }}
+            style={{ flex: 1 }}
+            onLoadEnd={() => setWebLoading(false)}
+            onError={() => { setWebLoading(false); setWebError(true); }}
+            originWhitelist={['*']}
+            javaScriptEnabled
+            scrollEnabled
+          />
+        </View>
+      );
+    }
+
+    // ─── XLSX: SheetJS via CDN ───
+    if (isXlsx && base64Data) {
+      return (
+        <View style={{ flex: 1 }}>
+          {webLoading && (
+            <View style={styles.webLoadingOverlay}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.statusText}>
+                Procesando Excel...{'\n'}
+                <Text style={{ fontSize: 12, color: Colors.textMuted }}>Requiere conexión a internet</Text>
+              </Text>
+            </View>
+          )}
+          <WebView
+            source={{ html: xlsxHtml }}
+            style={{ flex: 1 }}
+            onLoadEnd={() => setWebLoading(false)}
+            onError={() => { setWebLoading(false); setWebError(true); }}
+            originWhitelist={['*']}
+            javaScriptEnabled
+            scrollEnabled
+          />
+        </View>
+      );
+    }
+
+    // ─── PPT and truly unsupported formats — can't render natively ───
     const label =
-      fileExtension === 'docx' ? 'documento Word' :
-      fileExtension === 'xlsx' ? 'hoja de cálculo Excel' :
       fileExtension === 'pptx' ? 'presentación PowerPoint' :
       `archivo ${fileExtension.toUpperCase()}`;
 

@@ -204,7 +204,7 @@ export default function DocumentDetailScreen() {
             ui={ui}
             ext={doc.fileExtension}
             onOpen={handleShare}
-            onViewInApp={doc.fileExtension === 'pdf' ? () => navigation.navigate('DocumentViewer', {
+            onViewInApp={['pdf', 'docx', 'xlsx', 'xls'].includes(doc.fileExtension) ? () => navigation.navigate('DocumentViewer', {
               filePath: doc.filePath,
               filename: doc.originalFilename,
               mimeType: doc.mimeType,
@@ -239,7 +239,7 @@ export default function DocumentDetailScreen() {
 
         <View style={[styles.actionsRow, { backgroundColor: theme.surface }]}>
           <ActionButton icon={doc.isStarred ? 'star' : 'star-outline'} label={doc.isStarred ? 'Destacado' : 'Destacar'} color={doc.isStarred ? Colors.warning : Colors.textSecondary} onPress={handleToggleStar} />
-          {(isImage || doc.fileExtension === 'pdf') && (
+          {(isImage || ['pdf', 'docx', 'xlsx', 'xls'].includes(doc.fileExtension)) && (
             <ActionButton
               icon="eye-outline"
               label="Ver"
@@ -347,9 +347,9 @@ function DocumentPlaceholder({ ui, ext, onOpen, onViewInApp }: { ui: any; ext: s
         <Text style={[styles.docExtLabel, { color: ui.color }]}>{ext.toUpperCase()}</Text>
       </View>
       <Text style={[styles.docPlaceholderText, { color: theme.textPrimary }]}>{label}</Text>
-      {onViewInApp && ext === 'pdf' ? (
+      {onViewInApp && ['pdf', 'docx', 'xlsx', 'xls'].includes(ext) ? (
         <>
-          <Text style={[styles.docPlaceholderSub, { color: theme.textMuted }]}>Visualiza el PDF directamente en la app</Text>
+          <Text style={[styles.docPlaceholderSub, { color: theme.textMuted }]}>Visualiza el documento directamente en la app</Text>
           <TouchableOpacity style={[styles.openExternalBtn, { backgroundColor: theme.primarySubtle }]} onPress={onViewInApp} activeOpacity={0.8}>
             <MaterialCommunityIcons name="eye-outline" size={18} color={theme.primary} />
             <Text style={[styles.openExternalText, { color: theme.primary }]}>Ver en InboxDocs</Text>
