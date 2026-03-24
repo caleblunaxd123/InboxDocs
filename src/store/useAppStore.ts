@@ -17,11 +17,13 @@ interface AppStore {
   // Auth
   accounts: Account[];
   isInitialized: boolean;
+  hasSeenWalkthrough: boolean;
   setAccounts: (accounts: Account[]) => void;
   addAccount: (account: Account) => void;
   removeAccount: (id: string) => void;
   updateAccount: (id: string, updates: Partial<Account>) => void;
   setInitialized: (value: boolean) => void;
+  setHasSeenWalkthrough: (value: boolean) => void;
 
   // Documents
   documents: Document[];
@@ -68,6 +70,7 @@ export const useAppStore = create<AppStore>((set) => ({
   // Auth
   accounts: [],
   isInitialized: false,
+  hasSeenWalkthrough: false,
   setAccounts: (accounts) => set({ accounts }),
   addAccount: (account) => set((s) => ({ accounts: [...s.accounts, account] })),
   removeAccount: (id) => set((s) => ({ accounts: s.accounts.filter((a) => a.id !== id) })),
@@ -76,6 +79,7 @@ export const useAppStore = create<AppStore>((set) => ({
       accounts: s.accounts.map((a) => (a.id === id ? { ...a, ...updates } : a)),
     })),
   setInitialized: (value) => set({ isInitialized: value }),
+  setHasSeenWalkthrough: (value) => set({ hasSeenWalkthrough: value }),
 
   // Documents
   documents: [],
@@ -93,12 +97,21 @@ export const useAppStore = create<AppStore>((set) => ({
         .filter((d) => d.isStarred),
     })),
   removeDocument: (id) =>
-    set((s) => ({
-      documents: s.documents.filter((d) => d.id !== id),
-      recentDocuments: s.recentDocuments.filter((d) => d.id !== id),
-      starredDocuments: s.starredDocuments.filter((d) => d.id !== id),
-      totalDocuments: Math.max(0, s.totalDocuments - 1),
-    })),
+    set((s) => {
+      const removed = s.documents.find((d) => d.id === id)
+        ?? s.recentDocuments.find((d) => d.id === id)
+        ?? s.starredDocuments.find((d) => d.id === id);
+      return {
+        documents: s.documents.filter((d) => d.id !== id),
+        recentDocuments: s.recentDocuments.filter((d) => d.id !== id),
+        starredDocuments: s.starredDocuments.filter((d) => d.id !== id),
+        totalDocuments: Math.max(0, s.totalDocuments - 1),
+        // Decrement size only when we know how big the file was
+        totalSizeBytes: removed
+          ? Math.max(0, s.totalSizeBytes - removed.fileSize)
+          : s.totalSizeBytes,
+      };
+    }),
   upsertDocument: (doc) =>
     set((s) => {
       const exists = s.documents.some((d) => d.id === doc.id);

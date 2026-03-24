@@ -26,7 +26,7 @@ import { CategoryBadge, ProviderBadge } from '../components/ui/Badge';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
-import { getAllAccounts, updateAccountTokens } from '../database/accounts';
+import { updateAccountTokens } from '../database/accounts';
 import { getRecentDocuments, getDocumentStats, getStarredDocuments } from '../database/documents';
 import { signInWithGoogle, signInWithMicrosoft } from '../services/authService';
 import { syncGmailAccount, syncOutlookAccount } from '../services/syncService';
@@ -157,36 +157,23 @@ export default function HomeScreen() {
         tokenExpiresAt: result.expiresAt,
       });
 
-      // Build fresh account to avoid stale closure — sync directly
-      const freshAccount = {
+      // Pass a fresh account object to avoid stale closure in handleSyncAccount
+      const freshAccount: Account = {
         ...account,
         accessTokenEncrypted: result.accessToken,
         refreshTokenEncrypted: result.refreshToken,
         tokenExpiresAt: result.expiresAt,
       };
-
-      setSyncState(accountId, { isSyncing: true, progress: 'Reconectado — iniciando sync...', emailsScanned: 0, documentsFound: 0 });
-      const syncFn = freshAccount.provider === 'gmail' ? syncGmailAccount : syncOutlookAccount;
-      const downloaded = await syncFn(freshAccount, (p) => {
-        setSyncState(accountId, { progress: p.currentAction, emailsScanned: p.emailsScanned, documentsFound: p.documentsFound });
-      });
-      setSyncState(accountId, { isSyncing: false, lastSyncAt: Date.now() });
-      updateAccount(accountId, { lastSyncAt: Date.now() });
-      await loadData();
-      Alert.alert(
-        'Sincronización completada',
-        downloaded > 0 ? `Se descargaron ${downloaded} documento(s) nuevo(s).` : 'No se encontraron documentos nuevos.'
-      );
+      await handleSyncAccount(accountId, freshAccount);
     } catch (err: any) {
       setSyncState(accountId, { isSyncing: false });
       Alert.alert('Error al reconectar', err.message ?? 'No se pudo reconectar la cuenta.');
     }
-  }, [accounts, updateAccount, setSyncState, loadData]);
+  }, [accounts, updateAccount, setSyncState, handleSyncAccount]);
 
+  // Sync all accounts in parallel for faster total sync time
   const handleSyncAll = useCallback(async () => {
-    for (const account of accounts) {
-      await handleSyncAccount(account.id);
-    }
+    await Promise.allSettled(accounts.map((a) => handleSyncAccount(a.id)));
   }, [accounts, handleSyncAccount]);
 
   const handleSyncWithCustomRange = useCallback(async (accountId: string) => {
@@ -207,14 +194,15 @@ export default function HomeScreen() {
       .filter(([, enabled]) => enabled)
       .flatMap(([key]) => extMap[key] ?? []);
 
-    // Update allowed_extensions in DB settings
-    await import('../database/settings').then(m => m.setSetting('allowed_extensions', JSON.stringify(allowedExts)));
-    // Update in store too
-    if (settings) updateSetting('allowedExtensions' as any, allowedExts as any);
+    // Persist the updated extension list and sync-from date
+    const { setSetting } = await import('../database/settings');
+    await setSetting('allowed_extensions', JSON.stringify(allowedExts));
+    if (settings) updateSetting('allowed_extensions', allowedExts as any);
 
+    const { upsertAccount } = await import('../database/accounts');
     const freshAccount = { ...acc, syncFromDate: newFromDate, lastSyncAt: null };
     updateAccount(accountId, { syncFromDate: newFromDate, lastSyncAt: null });
-    await import('../database/accounts').then(m => m.upsertAccount(freshAccount));
+    await upsertAccount(freshAccount);
 
     await handleSyncAccount(accountId, freshAccount);
   }, [accounts, syncFromDate, syncFileTypes, handleSyncAccount, updateAccount, settings]);
@@ -262,6 +250,26 @@ export default function HomeScreen() {
           <View style={[styles.statDivider, { backgroundColor: theme.border }]} />
           <StatItem icon="account-multiple-outline" label="Cuentas" value={String(accounts.length)} />
         </FadeInUpView>
+
+        {/* First-use banner: shown only when connected but never synced */}
+        {totalDocuments === 0 && accounts.some(a => a.lastSyncAt === null) && (
+          <FadeInUpView delay={150}>
+            <View style={[styles.firstUseBanner, { borderColor: theme.primary + '40', backgroundColor: theme.primary + '10' }]}>
+              <View style={[styles.firstUseBannerIconWrap, { backgroundColor: theme.primary + '20' }]}>
+                <MaterialCommunityIcons name="rocket-launch-outline" size={22} color={theme.primary} />
+              </View>
+              <View style={styles.firstUseBannerBody}>
+                <Text style={[styles.firstUseBannerTitle, { color: theme.textPrimary }]}>
+                  ¡Cuenta conectada!
+                </Text>
+                <Text style={[styles.firstUseBannerText, { color: theme.textSecondary }]}>
+                  Pulsa "Sincronizar ahora" para importar tus documentos
+                </Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-down" size={20} color={theme.primary} />
+            </View>
+          </FadeInUpView>
+        )}
 
         {/* Accounts Section */}
         <FadeInUpView delay={200}>
@@ -489,86 +497,87 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* DateTimePicker for FROM date */}
-        {showFromPicker && (
-          <Modal transparent animationType="fade" onRequestClose={() => setShowFromPicker(false)}>
-            <View style={styles.datePickerOverlay}>
-              <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
-                <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha desde</Text>
-                {/* Date display */}
-                <View style={styles.datePickerManual}>
-                  {['Año', 'Mes', 'Día'].map((label, idx) => {
-                    const parts = [syncFromDate.getFullYear(), syncFromDate.getMonth() + 1, syncFromDate.getDate()];
-                    return (
-                      <View key={label} style={styles.datePartCol}>
-                        <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{label}</Text>
-                        <Text style={[styles.datePartValue, { color: theme.textPrimary, borderColor: theme.border }]}>
-                          {String(parts[idx]).padStart(2, '0')}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-                {/* Quick buttons */}
-                <View style={styles.datePickerPresets}>
-                  {[
-                    { label: 'Hace 1 semana', days: 7 },
-                    { label: 'Hace 30 días', days: 30 },
-                    { label: 'Hace 3 meses', days: 90 },
-                    { label: 'Hace 6 meses', days: 180 },
-                    { label: 'Hace 1 año', days: 365 },
-                  ].map(p => (
-                    <TouchableOpacity
-                      key={p.days}
-                      style={[styles.datePresetBtn, { borderColor: theme.border }]}
-                      onPress={() => { setSyncFromDate(subDays(new Date(), p.days)); setShowFromPicker(false); }}
-                    >
-                      <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <TouchableOpacity
-                  style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
-                  onPress={() => setShowFromPicker(false)}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-        )}
-
-        {showToPicker && (
-          <Modal transparent animationType="fade" onRequestClose={() => setShowToPicker(false)}>
-            <View style={styles.datePickerOverlay}>
-              <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
-                <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha hasta</Text>
-                <View style={styles.datePickerPresets}>
-                  {[
-                    { label: 'Hoy', days: 0 },
-                    { label: 'Hace 1 semana', days: 7 },
-                    { label: 'Hace 30 días', days: 30 },
-                  ].map(p => (
-                    <TouchableOpacity
-                      key={p.days}
-                      style={[styles.datePresetBtn, { borderColor: theme.border }]}
-                      onPress={() => { setSyncToDate(subDays(new Date(), p.days)); setShowToPicker(false); }}
-                    >
-                      <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <TouchableOpacity
-                  style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
-                  onPress={() => setShowToPicker(false)}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-        )}
       </Modal>
+
+      {/* DateTimePicker for FROM date - outside syncRangeModal to avoid nested modal issue on Android */}
+      {showFromPicker && (
+        <Modal transparent animationType="fade" onRequestClose={() => setShowFromPicker(false)}>
+          <View style={styles.datePickerOverlay}>
+            <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
+              <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha desde</Text>
+              {/* Date display */}
+              <View style={styles.datePickerManual}>
+                {['Año', 'Mes', 'Día'].map((label, idx) => {
+                  const parts = [syncFromDate.getFullYear(), syncFromDate.getMonth() + 1, syncFromDate.getDate()];
+                  return (
+                    <View key={label} style={styles.datePartCol}>
+                      <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{label}</Text>
+                      <Text style={[styles.datePartValue, { color: theme.textPrimary, borderColor: theme.border }]}>
+                        {String(parts[idx]).padStart(2, '0')}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+              {/* Quick buttons */}
+              <View style={styles.datePickerPresets}>
+                {[
+                  { label: 'Hace 1 semana', days: 7 },
+                  { label: 'Hace 30 días', days: 30 },
+                  { label: 'Hace 3 meses', days: 90 },
+                  { label: 'Hace 6 meses', days: 180 },
+                  { label: 'Hace 1 año', days: 365 },
+                ].map(p => (
+                  <TouchableOpacity
+                    key={p.days}
+                    style={[styles.datePresetBtn, { borderColor: theme.border }]}
+                    onPress={() => { setSyncFromDate(subDays(new Date(), p.days)); setShowFromPicker(false); }}
+                  >
+                    <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity
+                style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
+                onPress={() => setShowFromPicker(false)}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {showToPicker && (
+        <Modal transparent animationType="fade" onRequestClose={() => setShowToPicker(false)}>
+          <View style={styles.datePickerOverlay}>
+            <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
+              <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha hasta</Text>
+              <View style={styles.datePickerPresets}>
+                {[
+                  { label: 'Hoy', days: 0 },
+                  { label: 'Hace 1 semana', days: 7 },
+                  { label: 'Hace 30 días', days: 30 },
+                ].map(p => (
+                  <TouchableOpacity
+                    key={p.days}
+                    style={[styles.datePresetBtn, { borderColor: theme.border }]}
+                    onPress={() => { setSyncToDate(subDays(new Date(), p.days)); setShowToPicker(false); }}
+                  >
+                    <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity
+                style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
+                onPress={() => setShowToPicker(false)}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -699,6 +708,35 @@ const styles = StyleSheet.create({
     padding: Spacing.base,
     marginBottom: Spacing.xl,
     ...Shadows.subtle,
+  },
+  firstUseBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    borderRadius: BorderRadius.card,
+    borderWidth: 1.5,
+    padding: Spacing.base,
+    marginBottom: Spacing.xl,
+  },
+  firstUseBannerIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  firstUseBannerBody: {
+    flex: 1,
+    gap: 2,
+  },
+  firstUseBannerTitle: {
+    ...Typography.bodyM,
+    fontWeight: '700',
+  },
+  firstUseBannerText: {
+    ...Typography.caption,
+    lineHeight: 16,
   },
   statItem: { flex: 1, alignItems: 'center', gap: 4 },
   statDivider: { width: 1, backgroundColor: Colors.border },

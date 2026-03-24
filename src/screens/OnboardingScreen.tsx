@@ -9,6 +9,7 @@ import {
   Dimensions,
   ActivityIndicator,
   Modal,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,7 +19,6 @@ import { useAppStore } from '../store/useAppStore';
 import { signInWithGoogle, signInWithMicrosoft } from '../services/authService';
 import { upsertAccount } from '../database/accounts';
 import { Account } from '../types';
-import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { format, subDays } from 'date-fns';
 
@@ -28,6 +28,14 @@ const VALUE_PROPS = [
   { icon: 'inbox-arrow-down', text: 'Escanea tu correo automáticamente' },
   { icon: 'robot-happy-outline', text: 'IA organiza todo sin esfuerzo' },
   { icon: 'magnify', text: 'Encuentra cualquier documento al instante' },
+];
+
+// What the user gets — shown after connecting account
+const READY_ITEMS = [
+  { icon: 'check-circle', color: '#10B981', text: 'Cuenta conectada correctamente' },
+  { icon: 'robot-happy-outline', color: '#8B5CF6', text: 'La IA categorizará tus documentos' },
+  { icon: 'bell-outline', color: '#F59E0B', text: 'Te avisaremos cuando lleguen nuevos' },
+  { icon: 'lock-outline', color: '#3B82F6', text: 'Todo queda guardado en tu dispositivo' },
 ];
 
 const RANGE_OPTIONS = [
@@ -43,6 +51,8 @@ export default function OnboardingScreen() {
   const [loadingProvider, setLoadingProvider] = useState<'gmail' | 'outlook' | null>(null);
   const [rangeModal, setRangeModal] = useState(false);
   const [pendingAccount, setPendingAccount] = useState<Account | null>(null);
+  const [readyModal, setReadyModal] = useState(false);
+  const [connectedEmail, setConnectedEmail] = useState<string>('');
 
   const fadeAnim0 = useRef(new Animated.Value(0)).current;
   const fadeAnim1 = useRef(new Animated.Value(0)).current;
@@ -120,9 +130,19 @@ export default function OnboardingScreen() {
       syncFromDate: format(subDays(new Date(), days), 'yyyy-MM-dd'),
     };
     setRangeModal(false);
-    setPendingAccount(null);
+    setConnectedEmail(account.email);
     await upsertAccount(account);
-    addAccount(account);
+    // Show "ready" modal before adding account (which triggers navigation)
+    setReadyModal(true);
+    // Store the finalized account so the CTA can add it
+    setPendingAccount(account);
+  }
+
+  function handleReadyConfirm() {
+    if (!pendingAccount) return;
+    setReadyModal(false);
+    addAccount(pendingAccount);
+    setPendingAccount(null);
   }
 
   return (
@@ -211,6 +231,54 @@ export default function OnboardingScreen() {
                 <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
             ))}
+          </View>
+        </View>
+      </Modal>
+
+      {/* "Everything ready" confirmation modal */}
+      <Modal visible={readyModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.readyCard}>
+            {/* Success icon */}
+            <View style={styles.readyIconWrap}>
+              <LinearGradient
+                colors={['#1E40AF', '#3B82F6']}
+                style={styles.readyIconGradient}
+              >
+                <MaterialCommunityIcons name="check-bold" size={36} color="#fff" />
+              </LinearGradient>
+            </View>
+
+            <Text style={styles.readyTitle}>¡Todo listo!</Text>
+            <Text style={styles.readyEmail}>{connectedEmail}</Text>
+            <Text style={styles.readySubtitle}>
+              Tu cuenta está conectada. Esto es lo que pasará cuando entres a la app:
+            </Text>
+
+            <View style={styles.readyList}>
+              {READY_ITEMS.map((item, i) => (
+                <View key={i} style={styles.readyItem}>
+                  <MaterialCommunityIcons name={item.icon as any} size={20} color={item.color} />
+                  <Text style={styles.readyItemText}>{item.text}</Text>
+                </View>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              style={styles.readyBtn}
+              onPress={handleReadyConfirm}
+              activeOpacity={0.85}
+            >
+              <LinearGradient
+                colors={['#1E40AF', '#3B82F6']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.readyBtnGradient}
+              >
+                <MaterialCommunityIcons name="inbox-arrow-down" size={20} color="#fff" />
+                <Text style={styles.readyBtnText}>Ir a mis documentos</Text>
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -333,4 +401,81 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   rangeLabel: { ...Typography.bodyM, color: Colors.textPrimary, flex: 1 },
+
+  // Ready modal
+  readyCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.sheet,
+    padding: Spacing.xl,
+    width: '100%',
+    gap: Spacing.md,
+    alignItems: 'center',
+    ...Shadows.large,
+  },
+  readyIconWrap: {
+    marginBottom: Spacing.xs,
+  },
+  readyIconGradient: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  readyTitle: {
+    ...Typography.headingL,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  readyEmail: {
+    ...Typography.bodyM,
+    color: Colors.primary,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: -Spacing.xs,
+  },
+  readySubtitle: {
+    ...Typography.bodyM,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  readyList: {
+    width: '100%',
+    gap: Spacing.sm,
+    marginVertical: Spacing.xs,
+  },
+  readyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    backgroundColor: Colors.background,
+    borderRadius: BorderRadius.input,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+  },
+  readyItemText: {
+    ...Typography.bodyM,
+    color: Colors.textPrimary,
+    flex: 1,
+  },
+  readyBtn: {
+    width: '100%',
+    borderRadius: BorderRadius.input,
+    overflow: 'hidden',
+    marginTop: Spacing.xs,
+  },
+  readyBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.base,
+    paddingHorizontal: Spacing.xl,
+  },
+  readyBtnText: {
+    ...Typography.bodyL,
+    fontWeight: '700',
+    color: '#fff',
+  },
 });

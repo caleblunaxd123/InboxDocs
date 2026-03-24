@@ -1,14 +1,16 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef, CommonActions } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AppState, AppStateStatus } from 'react-native';
 import { useAppStore } from '../store/useAppStore';
-import { Colors, Typography } from '../utils/theme';
+import { useTheme } from '../utils/useTheme';
+import { Typography } from '../utils/theme';
 import { BiometricLock } from '../components/ui/BiometricLock';
 
 // Screens
+import WalkthroughScreen from '../screens/WalkthroughScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
 import HomeScreen from '../screens/HomeScreen';
 import RepositoryScreen from '../screens/RepositoryScreen';
@@ -29,6 +31,7 @@ export type RootStackParams = {
 };
 
 export type AuthStackParams = {
+  Walkthrough: undefined;
   Onboarding: undefined;
 };
 
@@ -39,20 +42,24 @@ export type MainTabParams = {
   Settings: undefined;
 };
 
+export const navigationRef = createNavigationContainerRef<RootStackParams>();
+
 const RootStack = createStackNavigator<RootStackParams>();
 const AuthStack = createStackNavigator<AuthStackParams>();
 const Tab = createBottomTabNavigator<MainTabParams>();
 
 function MainTabs() {
+  const theme = useTheme();
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: Colors.primary,
-        tabBarInactiveTintColor: Colors.textMuted,
+        tabBarActiveTintColor: theme.primary,
+        tabBarInactiveTintColor: theme.textMuted,
         tabBarStyle: {
-          borderTopColor: Colors.border,
-          backgroundColor: Colors.surface,
+          borderTopColor: theme.border,
+          backgroundColor: theme.surface,
           paddingBottom: 4,
           elevation: 8,
           shadowColor: '#000',
@@ -64,35 +71,39 @@ function MainTabs() {
           ...Typography.caption,
           fontWeight: '500',
         },
-        tabBarIcon: ({ color, size }) => {
-          const icons: Record<string, string> = {
-            Home: 'home-outline',
-            Repository: 'folder-outline',
-            Insights: 'chart-box-outline',
-            Settings: 'cog-outline',
+        tabBarIcon: ({ color, size, focused }) => {
+          const icons: Record<string, { outline: string; filled: string }> = {
+            Home:       { outline: 'home-outline',       filled: 'home' },
+            Repository: { outline: 'folder-outline',     filled: 'folder' },
+            Insights:   { outline: 'chart-box-outline',  filled: 'chart-box' },
+            Settings:   { outline: 'cog-outline',        filled: 'cog' },
           };
+          const iconSet = icons[route.name];
           return (
-            <MaterialCommunityIcons name={icons[route.name] as any} size={size} color={color} />
+            <MaterialCommunityIcons
+              name={(focused ? iconSet.filled : iconSet.outline) as any}
+              size={size}
+              color={color}
+            />
           );
         },
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: 'Inicio' }} />
+      <Tab.Screen name="Home"       component={HomeScreen}       options={{ tabBarLabel: 'Inicio' }} />
       <Tab.Screen name="Repository" component={RepositoryScreen} options={{ tabBarLabel: 'Documentos' }} />
-      <Tab.Screen name="Insights" component={InsightsScreen} options={{ tabBarLabel: 'Insights' }} />
-      <Tab.Screen name="Settings" component={SettingsScreen} options={{ tabBarLabel: 'Ajustes' }} />
+      <Tab.Screen name="Insights"   component={InsightsScreen}   options={{ tabBarLabel: 'Estadísticas' }} />
+      <Tab.Screen name="Settings"   component={SettingsScreen}   options={{ tabBarLabel: 'Ajustes' }} />
     </Tab.Navigator>
   );
 }
 
 export default function AppNavigator() {
-  const { accounts, isInitialized, settings } = useAppStore();
+  const { accounts, isInitialized, settings, hasSeenWalkthrough } = useAppStore();
   const isAuthenticated = accounts.length > 0;
   const [locked, setLocked] = React.useState(false);
-  // Timestamp when app went to background — used to ignore auth-dialog AppState flickers
   const backgroundedAt = React.useRef<number | null>(null);
 
-  // Lock on initial app launch (once initialized and biometrics enabled)
+  // Lock on initial launch when biometrics enabled
   React.useEffect(() => {
     if (!isInitialized) return;
     if (settings?.biometricsEnabled) {
@@ -100,16 +111,14 @@ export default function AppNavigator() {
     }
   }, [isInitialized, settings?.biometricsEnabled]);
 
-  // Lock only when app comes back from a real background (>2s), NOT from auth dialog dismiss
+  // Lock only when returning from real background (>2s)
   React.useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background') {
-        // Record when we truly went to background
         backgroundedAt.current = Date.now();
       } else if (state === 'active' && settings?.biometricsEnabled) {
         const bgTime = backgroundedAt.current;
         backgroundedAt.current = null;
-        // Auth dialogs cause inactive→active in <500ms — only lock after real backgrounding
         if (bgTime && Date.now() - bgTime > 2000) {
           setLocked(true);
         }
@@ -118,11 +127,26 @@ export default function AppNavigator() {
     return () => sub.remove();
   }, [settings?.biometricsEnabled]);
 
+  // Deep-link handler for push notification taps
+  React.useEffect(() => {
+    let Notifications: any = null;
+    try { Notifications = require('expo-notifications'); } catch { /* not available */ }
+    if (!Notifications) return;
+
+    const sub = Notifications.addNotificationResponseReceivedListener((response: any) => {
+      const screen = response?.notification?.request?.content?.data?.screen;
+      if (screen && navigationRef.isReady()) {
+        navigationRef.dispatch(CommonActions.navigate({ name: screen }));
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   if (!isInitialized) return null;
 
   return (
     <>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         {isAuthenticated ? (
           <RootStack.Navigator screenOptions={{ headerShown: false }}>
             <RootStack.Screen name="Main" component={MainTabs} />
@@ -138,7 +162,15 @@ export default function AppNavigator() {
             />
           </RootStack.Navigator>
         ) : (
-          <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+          <AuthStack.Navigator
+            screenOptions={{ headerShown: false, animationEnabled: true }}
+            initialRouteName={hasSeenWalkthrough ? 'Onboarding' : 'Walkthrough'}
+          >
+            <AuthStack.Screen
+              name="Walkthrough"
+              component={WalkthroughScreen}
+              options={{ gestureEnabled: false }}
+            />
             <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
           </AuthStack.Navigator>
         )}

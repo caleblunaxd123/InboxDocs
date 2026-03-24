@@ -23,6 +23,7 @@ import { Avatar } from '../components/ui/Avatar';
 import { ProviderBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { getAllSettings, setSetting } from '../database/settings';
+import { applyBackgroundSyncFrequency } from '../services/backgroundSync';
 import { deleteAccount, upsertAccount } from '../database/accounts';
 import { testOpenAIConnection } from '../services/aiService';
 import { signInWithGoogle, signInWithMicrosoft } from '../services/authService';
@@ -31,11 +32,9 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { getDocumentStats, deleteAllDocuments } from '../database/documents';
 import { exportDocumentsCsv } from '../utils/exportCsv';
 import { formatBytes } from '../utils/format';
-import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import * as LocalAuthentication from 'expo-local-authentication';
-
-const ATTACHMENT_DIR = `${FileSystem.documentDirectory}inboxdocs/attachments/`;
+import { ATTACHMENT_DIR } from '../constants';
 const VERSION = '1.0.0';
 
 const RANGE_OPTIONS = [
@@ -107,6 +106,69 @@ function BiometricToggleRow({ settings, updateSetting }: { settings: AppSettings
         trackColor={{ false: '#E5E7EB', true: Colors.primary + '60' }}
         thumbColor={settings?.biometricsEnabled ? Colors.primary : '#9CA3AF'}
       />
+    </View>
+  );
+}
+
+const SYNC_FREQUENCY_OPTIONS: { label: string; value: AppSettings['sync_frequency'] }[] = [
+  { label: 'Manual', value: 'manual' },
+  { label: 'Cada 6h', value: 'every_6h' },
+  { label: 'Cada 12h', value: 'every_12h' },
+  { label: 'Diaria', value: 'daily' },
+];
+
+function SyncFrequencyRow({
+  settings,
+  updateSetting,
+  theme,
+}: {
+  settings: AppSettings | null;
+  updateSetting: any;
+  theme: any;
+}) {
+  const current = settings?.sync_frequency ?? 'manual';
+
+  async function handleSelect(value: AppSettings['sync_frequency']) {
+    updateSetting('sync_frequency', value);
+    await setSetting('sync_frequency', value);
+    await applyBackgroundSyncFrequency(value);
+  }
+
+  return (
+    <View style={styles.syncFreqRow}>
+      <View style={[styles.rowIcon, { backgroundColor: '#10B98120' }]}>
+        <MaterialCommunityIcons name="clock-outline" size={16} color="#10B981" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.settingLabel, { color: theme.textPrimary }]}>Sync en segundo plano</Text>
+        <Text style={[styles.settingDescription, { color: theme.textMuted }]}>
+          Frecuencia del sync automático
+        </Text>
+      </View>
+      <View style={styles.freqOptions}>
+        {SYNC_FREQUENCY_OPTIONS.map((opt) => (
+          <TouchableOpacity
+            key={opt.value}
+            style={[
+              styles.freqOption,
+              { borderColor: theme.border, backgroundColor: theme.surface },
+              current === opt.value && styles.freqOptionActive,
+            ]}
+            onPress={() => handleSelect(opt.value)}
+            activeOpacity={0.75}
+          >
+            <Text
+              style={[
+                styles.freqOptionText,
+                { color: theme.textSecondary },
+                current === opt.value && styles.freqOptionTextActive,
+              ]}
+            >
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
     </View>
   );
 }
@@ -373,6 +435,8 @@ export default function SettingsScreen() {
             onChange={(v) => handleToggle('notify_on_new_docs', v)}
             theme={theme}
           />
+          <Divider theme={theme} />
+          <SyncFrequencyRow settings={settings} updateSetting={updateSetting} theme={theme} />
         </SettingsCard>
 
         {/* AI Settings */}
@@ -629,4 +693,10 @@ const styles = StyleSheet.create({
   themeOptionTextActive: { color: Colors.surface },
   exportRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base, paddingVertical: Spacing.md, gap: Spacing.md },
   exportText: { ...Typography.bodyM, color: '#10B981', fontWeight: '500' },
+  syncFreqRow: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: Spacing.base, paddingVertical: Spacing.md, gap: Spacing.md, flexWrap: 'wrap' },
+  freqOptions: { flexDirection: 'row', gap: Spacing.xs, flexWrap: 'wrap', marginTop: 2 },
+  freqOption: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.sm, paddingVertical: 6, borderRadius: BorderRadius.pill, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
+  freqOptionActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  freqOptionText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
+  freqOptionTextActive: { color: Colors.surface },
 });
