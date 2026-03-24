@@ -26,7 +26,7 @@ import { CategoryBadge, ProviderBadge } from '../components/ui/Badge';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
-import { getAllAccounts, updateAccountTokens } from '../database/accounts';
+import { updateAccountTokens } from '../database/accounts';
 import { getRecentDocuments, getDocumentStats, getStarredDocuments } from '../database/documents';
 import { signInWithGoogle, signInWithMicrosoft } from '../services/authService';
 import { syncGmailAccount, syncOutlookAccount } from '../services/syncService';
@@ -157,36 +157,23 @@ export default function HomeScreen() {
         tokenExpiresAt: result.expiresAt,
       });
 
-      // Build fresh account to avoid stale closure — sync directly
-      const freshAccount = {
+      // Pass a fresh account object to avoid stale closure in handleSyncAccount
+      const freshAccount: Account = {
         ...account,
         accessTokenEncrypted: result.accessToken,
         refreshTokenEncrypted: result.refreshToken,
         tokenExpiresAt: result.expiresAt,
       };
-
-      setSyncState(accountId, { isSyncing: true, progress: 'Reconectado — iniciando sync...', emailsScanned: 0, documentsFound: 0 });
-      const syncFn = freshAccount.provider === 'gmail' ? syncGmailAccount : syncOutlookAccount;
-      const downloaded = await syncFn(freshAccount, (p) => {
-        setSyncState(accountId, { progress: p.currentAction, emailsScanned: p.emailsScanned, documentsFound: p.documentsFound });
-      });
-      setSyncState(accountId, { isSyncing: false, lastSyncAt: Date.now() });
-      updateAccount(accountId, { lastSyncAt: Date.now() });
-      await loadData();
-      Alert.alert(
-        'Sincronización completada',
-        downloaded > 0 ? `Se descargaron ${downloaded} documento(s) nuevo(s).` : 'No se encontraron documentos nuevos.'
-      );
+      await handleSyncAccount(accountId, freshAccount);
     } catch (err: any) {
       setSyncState(accountId, { isSyncing: false });
       Alert.alert('Error al reconectar', err.message ?? 'No se pudo reconectar la cuenta.');
     }
-  }, [accounts, updateAccount, setSyncState, loadData]);
+  }, [accounts, updateAccount, setSyncState, handleSyncAccount]);
 
+  // Sync all accounts in parallel for faster total sync time
   const handleSyncAll = useCallback(async () => {
-    for (const account of accounts) {
-      await handleSyncAccount(account.id);
-    }
+    await Promise.allSettled(accounts.map((a) => handleSyncAccount(a.id)));
   }, [accounts, handleSyncAccount]);
 
   const handleSyncWithCustomRange = useCallback(async (accountId: string) => {
@@ -207,14 +194,15 @@ export default function HomeScreen() {
       .filter(([, enabled]) => enabled)
       .flatMap(([key]) => extMap[key] ?? []);
 
-    // Update allowed_extensions in DB settings
-    await import('../database/settings').then(m => m.setSetting('allowed_extensions', JSON.stringify(allowedExts)));
-    // Update in store too
-    if (settings) updateSetting('allowedExtensions' as any, allowedExts as any);
+    // Persist the updated extension list and sync-from date
+    const { setSetting } = await import('../database/settings');
+    await setSetting('allowed_extensions', JSON.stringify(allowedExts));
+    if (settings) updateSetting('allowed_extensions', allowedExts as any);
 
+    const { upsertAccount } = await import('../database/accounts');
     const freshAccount = { ...acc, syncFromDate: newFromDate, lastSyncAt: null };
     updateAccount(accountId, { syncFromDate: newFromDate, lastSyncAt: null });
-    await import('../database/accounts').then(m => m.upsertAccount(freshAccount));
+    await upsertAccount(freshAccount);
 
     await handleSyncAccount(accountId, freshAccount);
   }, [accounts, syncFromDate, syncFileTypes, handleSyncAccount, updateAccount, settings]);

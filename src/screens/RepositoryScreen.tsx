@@ -28,7 +28,7 @@ import { SearchBar } from '../components/ui/SearchBar';
 import { FilterChipRow } from '../components/ui/FilterChip';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Document, FilterCategory } from '../types';
-import { getFilteredDocumentsPage, deleteDocument } from '../database/documents';
+import { getFilteredDocumentsPage, deleteDocument, getAllFilteredDocuments } from '../database/documents';
 import { formatBytes } from '../utils/format';
 import { CategoryLabels } from '../utils/theme';
 import { getFileTypeUI } from '../utils/fileTypes';
@@ -103,21 +103,24 @@ export default function RepositoryScreen() {
 
   const checkFileAvailability = useCallback(async (docs: Document[]) => {
     if (docs.length === 0) return;
-    // Check in small batches to avoid blocking
-    const batch = docs.slice(0, 50);
-    const results = await Promise.all(
-      batch.map(async (d) => {
-        try {
-          const info = await FileSystem.getInfoAsync(d.filePath);
-          return { id: d.id, exists: info.exists };
-        } catch {
-          return { id: d.id, exists: false };
-        }
-      })
-    );
-    const map: Record<string, boolean> = {};
-    results.forEach((r) => { map[r.id] = r.exists; });
-    setFileAvailability((prev) => ({ ...prev, ...map }));
+    // Process in batches of 100 to avoid overwhelming the filesystem
+    const BATCH = 100;
+    for (let i = 0; i < docs.length; i += BATCH) {
+      const batch = docs.slice(i, i + BATCH);
+      const results = await Promise.all(
+        batch.map(async (d) => {
+          try {
+            const info = await FileSystem.getInfoAsync(d.filePath);
+            return { id: d.id, exists: info.exists };
+          } catch {
+            return { id: d.id, exists: false };
+          }
+        })
+      );
+      const map: Record<string, boolean> = {};
+      results.forEach((r) => { map[r.id] = r.exists; });
+      setFileAvailability((prev) => ({ ...prev, ...map }));
+    }
   }, []);
 
   const loadDocuments = useCallback(async (reset = true) => {
@@ -159,12 +162,11 @@ export default function RepositoryScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      // Exit selection mode when leaving/returning
       setSelectionMode(false);
       setSelectedIds(new Set());
       offsetRef.current = 0;
       loadDocuments(true);
-    }, [filters.category, filters.provider, filters.fileType, filters.dateRange, filters.starredOnly, filters.sortBy])
+    }, [filters.category, filters.provider, filters.fileType, filters.dateRange, filters.starredOnly, filters.sortBy, filters.searchQuery])
   );
 
   useEffect(() => {
@@ -245,17 +247,22 @@ export default function RepositoryScreen() {
     }
   }, [documents, selectedIds]);
 
+  // Fetch ALL matching documents from the DB (not just the loaded page) before exporting
   const handleExportAll = useCallback(async () => {
-    if (documents.length === 0) return;
     setExportingCsv(true);
     try {
-      await exportDocumentsCsv(documents);
+      const allDocs = await getAllFilteredDocuments(filters);
+      if (allDocs.length === 0) {
+        Alert.alert('Sin documentos', 'No hay documentos que exportar con los filtros actuales.');
+        return;
+      }
+      await exportDocumentsCsv(allDocs);
     } catch (e: any) {
       Alert.alert('Error', 'No se pudo exportar: ' + (e?.message ?? ''));
     } finally {
       setExportingCsv(false);
     }
-  }, [documents]);
+  }, [filters]);
 
   const renderItem = useCallback(({ item }: { item: Document }) => (
     <DocumentListItem
