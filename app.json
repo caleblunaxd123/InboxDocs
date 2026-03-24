@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.inboxdocs.app"
+      "bundleIdentifier": "com.inboxdocs.app",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "InboxDocs usa Face ID para proteger el acceso a tus documentos privados."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +27,9 @@
       "package": "com.inboxdocs.app",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
-        "VIBRATE"
+        "VIBRATE",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
       ]
     },
     "web": {
@@ -34,6 +39,7 @@
       "expo-sqlite",
       "expo-secure-store",
       "expo-web-browser",
+      "expo-local-authentication",
       [
         "expo-notifications",
         {
