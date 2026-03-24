@@ -509,86 +509,87 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* DateTimePicker for FROM date */}
-        {showFromPicker && (
-          <Modal transparent animationType="fade" onRequestClose={() => setShowFromPicker(false)}>
-            <View style={styles.datePickerOverlay}>
-              <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
-                <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha desde</Text>
-                {/* Date display */}
-                <View style={styles.datePickerManual}>
-                  {['Año', 'Mes', 'Día'].map((label, idx) => {
-                    const parts = [syncFromDate.getFullYear(), syncFromDate.getMonth() + 1, syncFromDate.getDate()];
-                    return (
-                      <View key={label} style={styles.datePartCol}>
-                        <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{label}</Text>
-                        <Text style={[styles.datePartValue, { color: theme.textPrimary, borderColor: theme.border }]}>
-                          {String(parts[idx]).padStart(2, '0')}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-                {/* Quick buttons */}
-                <View style={styles.datePickerPresets}>
-                  {[
-                    { label: 'Hace 1 semana', days: 7 },
-                    { label: 'Hace 30 días', days: 30 },
-                    { label: 'Hace 3 meses', days: 90 },
-                    { label: 'Hace 6 meses', days: 180 },
-                    { label: 'Hace 1 año', days: 365 },
-                  ].map(p => (
-                    <TouchableOpacity
-                      key={p.days}
-                      style={[styles.datePresetBtn, { borderColor: theme.border }]}
-                      onPress={() => { setSyncFromDate(subDays(new Date(), p.days)); setShowFromPicker(false); }}
-                    >
-                      <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <TouchableOpacity
-                  style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
-                  onPress={() => setShowFromPicker(false)}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-        )}
-
-        {showToPicker && (
-          <Modal transparent animationType="fade" onRequestClose={() => setShowToPicker(false)}>
-            <View style={styles.datePickerOverlay}>
-              <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
-                <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha hasta</Text>
-                <View style={styles.datePickerPresets}>
-                  {[
-                    { label: 'Hoy', days: 0 },
-                    { label: 'Hace 1 semana', days: 7 },
-                    { label: 'Hace 30 días', days: 30 },
-                  ].map(p => (
-                    <TouchableOpacity
-                      key={p.days}
-                      style={[styles.datePresetBtn, { borderColor: theme.border }]}
-                      onPress={() => { setSyncToDate(subDays(new Date(), p.days)); setShowToPicker(false); }}
-                    >
-                      <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <TouchableOpacity
-                  style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
-                  onPress={() => setShowToPicker(false)}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-        )}
       </Modal>
+
+      {/* DateTimePicker for FROM date - outside syncRangeModal to avoid nested modal issue on Android */}
+      {showFromPicker && (
+        <Modal transparent animationType="fade" onRequestClose={() => setShowFromPicker(false)}>
+          <View style={styles.datePickerOverlay}>
+            <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
+              <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha desde</Text>
+              {/* Date display */}
+              <View style={styles.datePickerManual}>
+                {['Año', 'Mes', 'Día'].map((label, idx) => {
+                  const parts = [syncFromDate.getFullYear(), syncFromDate.getMonth() + 1, syncFromDate.getDate()];
+                  return (
+                    <View key={label} style={styles.datePartCol}>
+                      <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{label}</Text>
+                      <Text style={[styles.datePartValue, { color: theme.textPrimary, borderColor: theme.border }]}>
+                        {String(parts[idx]).padStart(2, '0')}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+              {/* Quick buttons */}
+              <View style={styles.datePickerPresets}>
+                {[
+                  { label: 'Hace 1 semana', days: 7 },
+                  { label: 'Hace 30 días', days: 30 },
+                  { label: 'Hace 3 meses', days: 90 },
+                  { label: 'Hace 6 meses', days: 180 },
+                  { label: 'Hace 1 año', days: 365 },
+                ].map(p => (
+                  <TouchableOpacity
+                    key={p.days}
+                    style={[styles.datePresetBtn, { borderColor: theme.border }]}
+                    onPress={() => { setSyncFromDate(subDays(new Date(), p.days)); setShowFromPicker(false); }}
+                  >
+                    <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity
+                style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
+                onPress={() => setShowFromPicker(false)}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {showToPicker && (
+        <Modal transparent animationType="fade" onRequestClose={() => setShowToPicker(false)}>
+          <View style={styles.datePickerOverlay}>
+            <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
+              <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha hasta</Text>
+              <View style={styles.datePickerPresets}>
+                {[
+                  { label: 'Hoy', days: 0 },
+                  { label: 'Hace 1 semana', days: 7 },
+                  { label: 'Hace 30 días', days: 30 },
+                ].map(p => (
+                  <TouchableOpacity
+                    key={p.days}
+                    style={[styles.datePresetBtn, { borderColor: theme.border }]}
+                    onPress={() => { setSyncToDate(subDays(new Date(), p.days)); setShowToPicker(false); }}
+                  >
+                    <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity
+                style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
+                onPress={() => setShowToPicker(false)}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
