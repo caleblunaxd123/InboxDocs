@@ -97,12 +97,21 @@ export const useAppStore = create<AppStore>((set) => ({
         .filter((d) => d.isStarred),
     })),
   removeDocument: (id) =>
-    set((s) => ({
-      documents: s.documents.filter((d) => d.id !== id),
-      recentDocuments: s.recentDocuments.filter((d) => d.id !== id),
-      starredDocuments: s.starredDocuments.filter((d) => d.id !== id),
-      totalDocuments: Math.max(0, s.totalDocuments - 1),
-    })),
+    set((s) => {
+      const removed = s.documents.find((d) => d.id === id)
+        ?? s.recentDocuments.find((d) => d.id === id)
+        ?? s.starredDocuments.find((d) => d.id === id);
+      return {
+        documents: s.documents.filter((d) => d.id !== id),
+        recentDocuments: s.recentDocuments.filter((d) => d.id !== id),
+        starredDocuments: s.starredDocuments.filter((d) => d.id !== id),
+        totalDocuments: Math.max(0, s.totalDocuments - 1),
+        // Decrement size only when we know how big the file was
+        totalSizeBytes: removed
+          ? Math.max(0, s.totalSizeBytes - removed.fileSize)
+          : s.totalSizeBytes,
+      };
+    }),
   upsertDocument: (doc) =>
     set((s) => {
       const exists = s.documents.some((d) => d.id === doc.id);

@@ -1,3 +1,5 @@
+// Must be the very first import so crypto.getRandomValues is polyfilled globally
+import 'react-native-get-random-values';
 import { registerRootComponent } from 'expo';
 
 import App from './App';

@@ -31,11 +31,9 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { getDocumentStats, deleteAllDocuments } from '../database/documents';
 import { exportDocumentsCsv } from '../utils/exportCsv';
 import { formatBytes } from '../utils/format';
-import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import * as LocalAuthentication from 'expo-local-authentication';
-
-const ATTACHMENT_DIR = `${FileSystem.documentDirectory}inboxdocs/attachments/`;
+import { ATTACHMENT_DIR } from '../constants';
 const VERSION = '1.0.0';
 
 const RANGE_OPTIONS = [

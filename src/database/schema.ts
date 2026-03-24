@@ -1,12 +1,13 @@
 import * as SQLite from 'expo-sqlite';
 
-let db: SQLite.SQLiteDatabase | null = null;
+// Promise-based singleton — safe against concurrent initialization calls.
+let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
-export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
-  if (!db) {
-    db = await SQLite.openDatabaseAsync('inboxdocs.db');
+export function getDatabase(): Promise<SQLite.SQLiteDatabase> {
+  if (!dbPromise) {
+    dbPromise = SQLite.openDatabaseAsync('inboxdocs.db');
   }
-  return db;
+  return dbPromise;
 }
 
 export async function initializeDatabase(): Promise<void> {
@@ -77,8 +78,7 @@ export async function initializeDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_documents_starred ON documents(is_starred);
   `);
 
-  // Migration: ensure UNIQUE index exists even on DBs created before the constraint was added.
-  // First remove any duplicate rows keeping only the earliest (lowest rowid) per (account,message,attachment).
+  // Migration: ensure UNIQUE index exists on DBs created before the constraint was added.
   try {
     await database.execAsync(`
       DELETE FROM documents WHERE rowid NOT IN (
@@ -91,7 +91,7 @@ export async function initializeDatabase(): Promise<void> {
       ON documents(account_id, message_id, attachment_id);
     `);
   } catch {
-    // Index may already exist via the table UNIQUE constraint — that's fine
+    // Index already exists via the table UNIQUE constraint — fine.
   }
 
   // Default settings

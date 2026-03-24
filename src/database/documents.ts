@@ -234,6 +234,14 @@ export async function getFilteredDocumentsPage(
   return rows.map(rowToDocument);
 }
 
+/**
+ * Returns ALL documents matching the given filters — no pagination limit.
+ * Use for CSV export so the full dataset is always exported.
+ */
+export async function getAllFilteredDocuments(filters: DocumentFilters): Promise<Document[]> {
+  return getFilteredDocuments(filters);
+}
+
 export async function getRecentDocuments(limit = 10): Promise<Document[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync(
@@ -271,12 +279,17 @@ export async function getDocumentsByCategory(): Promise<{ category: string; coun
 
 export async function getDocumentsByMonth(months = 12): Promise<{ month: string; count: number }[]> {
   const db = await getDatabase();
+  // Use exact date arithmetic instead of the 30-days-per-month approximation
+  const since = new Date();
+  since.setMonth(since.getMonth() - months);
+  since.setDate(1);
+  since.setHours(0, 0, 0, 0);
   const rows = await db.getAllAsync(
     `SELECT strftime('%Y-%m', datetime(email_date/1000, 'unixepoch')) as month, COUNT(*) as count
      FROM documents
      WHERE email_date >= ?
      GROUP BY month ORDER BY month ASC`,
-    [Date.now() - months * 30 * 24 * 60 * 60 * 1000]
+    [since.getTime()]
   );
   return (rows as any[]).map(r => ({ month: r.month, count: r.count }));
 }

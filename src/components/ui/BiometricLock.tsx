@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,8 @@ interface Props {
 }
 
 export function BiometricLock({ visible, onAuthenticated }: Props) {
+  // useRef instead of useState so the guard is never stale in async callbacks
+  const checkingRef = useRef(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [biometricType, setBiometricType] = useState<'face' | 'fingerprint' | 'none'>('none');
@@ -41,15 +43,17 @@ export function BiometricLock({ visible, onAuthenticated }: Props) {
   }
 
   const authenticate = useCallback(async () => {
-    if (checking) return;
+    // Guard against concurrent calls using ref (never stale in async context)
+    if (checkingRef.current) return;
+    checkingRef.current = true;
     setChecking(true);
     setError(null);
+
     try {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      const isEnrolled  = await LocalAuthentication.isEnrolledAsync();
 
       if (!hasHardware || !isEnrolled) {
-        // No biometrics available — let user through
         onAuthenticated();
         return;
       }
@@ -73,27 +77,34 @@ export function BiometricLock({ visible, onAuthenticated }: Props) {
     } catch (e: any) {
       setError(e?.message ?? 'Error de autenticación');
     } finally {
+      checkingRef.current = false;
       setChecking(false);
     }
-  }, [checking, onAuthenticated]);
+  }, [onAuthenticated]);
 
-  const icon = biometricType === 'face' ? 'face-recognition' :
-               biometricType === 'fingerprint' ? 'fingerprint' : 'lock-outline';
-  const label = biometricType === 'face' ? 'Face ID' :
-                biometricType === 'fingerprint' ? 'Huella dactilar' : 'Biometría';
+  const icon  = biometricType === 'face' ? 'face-recognition'
+              : biometricType === 'fingerprint' ? 'fingerprint'
+              : 'lock-outline';
+  const label = biometricType === 'face' ? 'Face ID'
+              : biometricType === 'fingerprint' ? 'Huella dactilar'
+              : 'Biometría';
 
   return (
-    <Modal visible={visible} animationType="fade" statusBarTranslucent>
+    <Modal
+      visible={visible}
+      animationType="fade"
+      statusBarTranslucent
+      // Prevent Android back button from dismissing the lock screen
+      onRequestClose={() => {}}
+    >
       <View style={styles.container}>
         <View style={styles.content}>
-          {/* App icon */}
           <View style={styles.appIcon}>
             <MaterialCommunityIcons name="inbox-arrow-down" size={32} color="#fff" />
           </View>
           <Text style={styles.appName}>InboxDocs</Text>
           <Text style={styles.subtitle}>Verifica tu identidad para continuar</Text>
 
-          {/* Biometric icon */}
           <TouchableOpacity
             style={[styles.biometricBtn, checking && styles.biometricBtnActive]}
             onPress={authenticate}
@@ -106,7 +117,9 @@ export function BiometricLock({ visible, onAuthenticated }: Props) {
             />
           </TouchableOpacity>
 
-          <Text style={styles.biometricLabel}>{checking ? 'Verificando...' : `Toca para usar ${label}`}</Text>
+          <Text style={styles.biometricLabel}>
+            {checking ? 'Verificando...' : `Toca para usar ${label}`}
+          </Text>
 
           {error && (
             <View style={styles.errorBox}>
@@ -169,7 +182,6 @@ const styles = StyleSheet.create({
   },
   biometricBtnActive: {
     borderColor: '#6366F1',
-    backgroundColor: '#1E293B',
   },
   biometricLabel: {
     fontSize: 14,
