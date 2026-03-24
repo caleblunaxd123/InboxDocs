@@ -89,6 +89,8 @@ export default function AppNavigator() {
   const { accounts, isInitialized, settings } = useAppStore();
   const isAuthenticated = accounts.length > 0;
   const [locked, setLocked] = React.useState(false);
+  // Timestamp when app went to background — used to ignore auth-dialog AppState flickers
+  const backgroundedAt = React.useRef<number | null>(null);
 
   // Lock on initial app launch (once initialized and biometrics enabled)
   React.useEffect(() => {
@@ -98,11 +100,19 @@ export default function AppNavigator() {
     }
   }, [isInitialized, settings?.biometricsEnabled]);
 
-  // Lock when app returns to foreground
+  // Lock only when app comes back from a real background (>2s), NOT from auth dialog dismiss
   React.useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active' && settings?.biometricsEnabled) {
-        setLocked(true);
+      if (state === 'background') {
+        // Record when we truly went to background
+        backgroundedAt.current = Date.now();
+      } else if (state === 'active' && settings?.biometricsEnabled) {
+        const bgTime = backgroundedAt.current;
+        backgroundedAt.current = null;
+        // Auth dialogs cause inactive→active in <500ms — only lock after real backgrounding
+        if (bgTime && Date.now() - bgTime > 2000) {
+          setLocked(true);
+        }
       }
     });
     return () => sub.remove();
