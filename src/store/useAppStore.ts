@@ -1,12 +1,16 @@
 import { create } from 'zustand';
 import { Account, Document, AppSettings, DocumentFilters, CategoryId } from '../types';
 
+interface SyncStateEntry {
+  isSyncing: boolean;
+  progress: string;
+  lastSyncAt: number | null;
+  emailsScanned: number;
+  documentsFound: number;
+}
+
 interface SyncState {
-  [accountId: string]: {
-    isSyncing: boolean;
-    progress: string;
-    lastSyncAt: number | null;
-  };
+  [accountId: string]: SyncStateEntry;
 }
 
 interface AppStore {
@@ -22,8 +26,10 @@ interface AppStore {
   // Documents
   documents: Document[];
   recentDocuments: Document[];
+  starredDocuments: Document[];
   setDocuments: (docs: Document[]) => void;
   setRecentDocuments: (docs: Document[]) => void;
+  setStarredDocuments: (docs: Document[]) => void;
   updateDocument: (id: string, updates: Partial<Document>) => void;
   removeDocument: (id: string) => void;
   upsertDocument: (doc: Document) => void;
@@ -40,7 +46,7 @@ interface AppStore {
 
   // Sync
   syncState: SyncState;
-  setSyncState: (accountId: string, state: Partial<SyncState[string]>) => void;
+  setSyncState: (accountId: string, state: Partial<SyncStateEntry>) => void;
 
   // Settings
   settings: AppSettings | null;
@@ -74,17 +80,23 @@ export const useAppStore = create<AppStore>((set) => ({
   // Documents
   documents: [],
   recentDocuments: [],
+  starredDocuments: [],
   setDocuments: (documents) => set({ documents }),
   setRecentDocuments: (recentDocuments) => set({ recentDocuments }),
+  setStarredDocuments: (starredDocuments) => set({ starredDocuments }),
   updateDocument: (id, updates) =>
     set((s) => ({
       documents: s.documents.map((d) => (d.id === id ? { ...d, ...updates } : d)),
       recentDocuments: s.recentDocuments.map((d) => (d.id === id ? { ...d, ...updates } : d)),
+      starredDocuments: s.starredDocuments
+        .map((d) => (d.id === id ? { ...d, ...updates } : d))
+        .filter((d) => d.isStarred),
     })),
   removeDocument: (id) =>
     set((s) => ({
       documents: s.documents.filter((d) => d.id !== id),
       recentDocuments: s.recentDocuments.filter((d) => d.id !== id),
+      starredDocuments: s.starredDocuments.filter((d) => d.id !== id),
       totalDocuments: Math.max(0, s.totalDocuments - 1),
     })),
   upsertDocument: (doc) =>

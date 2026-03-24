@@ -1,5 +1,5 @@
-import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ScrollView, View } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { TouchableOpacity, Text, StyleSheet, ScrollView, Animated } from 'react-native';
 import { Colors, BorderRadius, Spacing, Typography } from '../../utils/theme';
 
 interface ChipProps {
@@ -8,15 +8,35 @@ interface ChipProps {
   onPress: () => void;
 }
 
-export const FilterChip: React.FC<ChipProps> = ({ label, selected, onPress }) => (
-  <TouchableOpacity
-    style={[styles.chip, selected && styles.chipSelected]}
-    onPress={onPress}
-    activeOpacity={0.75}
-  >
-    <Text style={[styles.label, selected && styles.labelSelected]}>{label}</Text>
-  </TouchableOpacity>
-);
+export const FilterChip: React.FC<ChipProps> = ({ label, selected, onPress }) => {
+  const anim = useRef(new Animated.Value(selected ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: selected ? 1 : 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [selected]);
+
+  const bgColor = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Colors.border, Colors.primary],
+  });
+
+  const textColor = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Colors.textPrimary, '#FFFFFF'],
+  });
+
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.75}>
+      <Animated.View style={[styles.chip, { backgroundColor: bgColor }]}>
+        <Animated.Text style={[styles.label, { color: textColor }]}>{label}</Animated.Text>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+};
 
 interface FilterChipRowProps {
   chips: { key: string; label: string }[];
@@ -51,17 +71,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: 6,
     borderRadius: BorderRadius.pill,
-    backgroundColor: Colors.border,
-  },
-  chipSelected: {
-    backgroundColor: Colors.primary,
   },
   label: {
     ...Typography.bodyM,
     fontWeight: '500',
-    color: Colors.textPrimary,
-  },
-  labelSelected: {
-    color: '#FFFFFF',
   },
 });

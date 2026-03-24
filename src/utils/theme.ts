@@ -1,15 +1,15 @@
 export const Colors = {
-  primary: '#1E40AF',
-  primaryLight: '#3B82F6',
+  primary: '#2563EB', // Blue 600 (Profesional e Índigo vibrante)
+  primaryLight: '#60A5FA',
   primarySubtle: '#EFF6FF',
   success: '#10B981',
   warning: '#F59E0B',
   danger: '#EF4444',
   surface: '#FFFFFF',
-  background: '#F8FAFC',
-  border: '#E2E8F0',
+  background: '#F8FAFC', // Fondo gris muy claro para contrastar la tarjeta blanca pura
+  border: '#E2E8F0', // Slate 200 - Más suave y limpio
   textPrimary: '#0F172A',
-  textSecondary: '#64748B',
+  textSecondary: '#475569',
   textMuted: '#94A3B8',
   // Dark mode
   darkBackground: '#0F172A',
@@ -18,6 +18,28 @@ export const Colors = {
   darkTextPrimary: '#F1F5F9',
   darkTextSecondary: '#94A3B8',
 };
+
+export const DarkColors = {
+  primary: '#3B82F6',
+  primaryLight: '#60A5FA',
+  primarySubtle: '#1E3A5F',
+  success: '#10B981',
+  warning: '#F59E0B',
+  danger: '#EF4444',
+  surface: '#1E293B',
+  background: '#0F172A',
+  border: '#334155',
+  textPrimary: '#F1F5F9',
+  textSecondary: '#94A3B8',
+  textMuted: '#64748B',
+  darkBackground: '#0F172A',
+  darkSurface: '#1E293B',
+  darkBorder: '#334155',
+  darkTextPrimary: '#F1F5F9',
+  darkTextSecondary: '#94A3B8',
+};
+
+export type ThemeColors = typeof Colors;
 
 export const CategoryColors: Record<string, string> = {
   invoice: '#3B82F6',
@@ -43,7 +65,7 @@ export const CategoryLabels: Record<string, string> = {
 
 export const CategoryIcons: Record<string, string> = {
   invoice: 'receipt',
-  receipt: 'shopping-bag',
+  receipt: 'receipt',
   statement: 'bank',
   contract: 'file-sign',
   tax: 'calculator',
@@ -65,9 +87,9 @@ export const Spacing = {
 };
 
 export const BorderRadius = {
-  input: 8,
-  card: 12,
-  sheet: 16,
+  input: 10,
+  card: 16, // Tarjetas más redondeadas, estilo moderno
+  sheet: 24,
   pill: 24,
   full: 9999,
 };
@@ -76,6 +98,7 @@ export const Typography = {
   headingXL: { fontSize: 28, fontWeight: '700' as const, letterSpacing: -0.5 },
   headingL: { fontSize: 22, fontWeight: '700' as const, letterSpacing: -0.3 },
   headingM: { fontSize: 18, fontWeight: '600' as const },
+  headingS: { fontSize: 13, fontWeight: '600' as const, lineHeight: 18 },
   bodyL: { fontSize: 16, fontWeight: '400' as const, lineHeight: 24 },
   bodyM: { fontSize: 14, fontWeight: '400' as const, lineHeight: 20 },
   caption: { fontSize: 12, fontWeight: '400' as const },
@@ -84,24 +107,24 @@ export const Typography = {
 
 export const Shadows = {
   subtle: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
+    shadowColor: '#64748B', // Sombra tintada en azul-gris en lugar de negro puro
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
     elevation: 2,
   },
   medium: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 6,
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
     elevation: 4,
   },
   large: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.1,
-    shadowRadius: 15,
+    shadowRadius: 24,
     elevation: 8,
   },
 };

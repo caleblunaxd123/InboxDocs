@@ -77,6 +77,23 @@ export async function initializeDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_documents_starred ON documents(is_starred);
   `);
 
+  // Migration: ensure UNIQUE index exists even on DBs created before the constraint was added.
+  // First remove any duplicate rows keeping only the earliest (lowest rowid) per (account,message,attachment).
+  try {
+    await database.execAsync(`
+      DELETE FROM documents WHERE rowid NOT IN (
+        SELECT MIN(rowid) FROM documents
+        GROUP BY account_id, message_id, attachment_id
+      );
+    `);
+    await database.execAsync(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_doc_unique
+      ON documents(account_id, message_id, attachment_id);
+    `);
+  } catch {
+    // Index may already exist via the table UNIQUE constraint — that's fine
+  }
+
   // Default settings
   const defaults: Record<string, string> = {
     sync_time: '07:00',
@@ -89,6 +106,7 @@ export async function initializeDatabase(): Promise<void> {
     theme: 'system',
     max_file_size_mb: '25',
     ai_categorization_enabled: 'true',
+    biometrics_enabled: 'false',
   };
 
   for (const [key, value] of Object.entries(defaults)) {

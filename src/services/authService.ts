@@ -1,6 +1,7 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import * as SecureStore from 'expo-secure-store';
+import * as Linking from 'expo-linking';
 import { Platform } from 'react-native';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -26,60 +27,57 @@ export interface OAuthResult {
   avatarUrl: string | null;
 }
 
+const EXPO_PROJECT = '@calebluna41/inboxdocs';
+const PROXY_BASE = `https://auth.expo.io/${EXPO_PROJECT}`;
+
 export async function signInWithGoogle(): Promise<OAuthResult> {
-  const clientId =
-    Platform.OS === 'ios'
-      ? GOOGLE_CLIENT_ID_IOS
-      : Platform.OS === 'android'
-      ? GOOGLE_CLIENT_ID_ANDROID
-      : GOOGLE_CLIENT_ID_WEB;
+  const clientId = GOOGLE_CLIENT_ID_WEB;
 
-  const redirectUri = AuthSession.makeRedirectUri({ scheme: 'inboxdocs' });
+  // The proxy redirect URI (registered in Google Cloud)
+  const proxyRedirectUri = PROXY_BASE;
 
-  const discovery = AuthSession.useAutoDiscovery('https://accounts.google.com');
+  // The return URL where the proxy will send the token back to Expo Go
+  const returnUrl = Linking.createURL('expo-auth-session');
 
-  // Build request manually since we need PKCE
-  const request = new AuthSession.AuthRequest({
-    clientId,
-    scopes: GOOGLE_SCOPES,
-    redirectUri,
-    usePKCE: true,
-    responseType: AuthSession.ResponseType.Code,
-  });
+  const googleAuthUrl =
+    `https://accounts.google.com/o/oauth2/v2/auth` +
+    `?client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(proxyRedirectUri)}` +
+    `&response_type=token` +
+    `&scope=${encodeURIComponent(GOOGLE_SCOPES.join(' '))}` +
+    `&prompt=select_account`;
 
-  await request.makeAuthUrlAsync({ authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth' });
+  // Build the proxy start URL — it will redirect to Google, get the token,
+  // then forward it back to the Expo Go app via returnUrl
+  const startUrl = `${PROXY_BASE}/start?${new URLSearchParams({
+    authUrl: googleAuthUrl,
+    returnUrl,
+  }).toString()}`;
 
-  const result = await request.promptAsync({
-    authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-  });
+  const result = await WebBrowser.openAuthSessionAsync(startUrl, returnUrl);
 
-  if (result.type !== 'success') {
-    throw new Error('Google sign-in cancelled or failed');
+  if (result.type !== 'success' || !result.url) {
+    throw new Error('Google sign-in cancelado o fallido');
   }
 
-  // Exchange code for tokens
-  const tokenResponse = await AuthSession.exchangeCodeAsync(
-    {
-      clientId,
-      code: result.params.code,
-      redirectUri,
-      extraParams: {
-        code_verifier: request.codeVerifier ?? '',
-      },
-    },
-    { tokenEndpoint: 'https://oauth2.googleapis.com/token' }
-  );
+  // The proxy appends the token as query params to the returnUrl
+  const urlPart = result.url.includes('#') ? result.url.split('#')[1] : result.url.split('?')[1] ?? '';
+  const urlParams = new URLSearchParams(urlPart);
+  const accessToken = urlParams.get('access_token');
 
-  // Fetch user profile
+  if (!accessToken) {
+    throw new Error('No se recibió el token de acceso de Google');
+  }
+
   const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-    headers: { Authorization: `Bearer ${tokenResponse.accessToken}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   const profile = await profileRes.json();
 
   return {
-    accessToken: tokenResponse.accessToken,
-    refreshToken: tokenResponse.refreshToken ?? '',
-    expiresAt: Date.now() + (tokenResponse.expiresIn ?? 3600) * 1000,
+    accessToken,
+    refreshToken: '',
+    expiresAt: Date.now() + 3600 * 1000,
     email: profile.email,
     displayName: profile.name ?? profile.email,
     avatarUrl: profile.picture ?? null,

@@ -70,6 +70,7 @@ export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   max_file_size_mb: number;
   ai_categorization_enabled: boolean;
+  biometricsEnabled: boolean;
 }
 
 export type FilterCategory = CategoryId | 'all';

@@ -33,5 +33,6 @@ export async function getAllSettings(): Promise<AppSettings> {
     theme: (map.theme as any) ?? 'system',
     max_file_size_mb: parseInt(map.max_file_size_mb ?? '25'),
     ai_categorization_enabled: map.ai_categorization_enabled !== 'false',
+    biometricsEnabled: map.biometrics_enabled === 'true',
   };
 }

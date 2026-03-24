@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
-import { Colors, BorderRadius } from '../../utils/theme';
+import { Colors } from '../../utils/theme';
 
 interface AvatarProps {
   name: string | null;
@@ -17,7 +17,8 @@ export const Avatar: React.FC<AvatarProps> = ({ name, url, size = 40, color = Co
     return (
       <Image
         source={{ uri: url }}
-        style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}
+        contentFit="cover"
+        style={{ width: size, height: size, borderRadius: size / 2 }}
       />
     );
   }
@@ -35,9 +36,6 @@ export const Avatar: React.FC<AvatarProps> = ({ name, url, size = 40, color = Co
 };
 
 const styles = StyleSheet.create({
-  avatar: {
-    resizeMode: 'cover',
-  },
   placeholder: {
     alignItems: 'center',
     justifyContent: 'center',

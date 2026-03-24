@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, Spacing, Typography } from '../../utils/theme';
 import { Button } from './Button';
@@ -18,18 +18,30 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   subtitle,
   actionLabel,
   onAction,
-}) => (
-  <View style={styles.container}>
-    <View style={styles.iconContainer}>
-      <MaterialCommunityIcons name={icon as any} size={48} color={Colors.textMuted} />
-    </View>
-    <Text style={styles.title}>{title}</Text>
+}) => {
+  const scale = useRef(new Animated.Value(0.5)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  return (
+    <View style={styles.container}>
+      <Animated.View style={[styles.iconContainer, { transform: [{ scale }], opacity }]}>
+        <MaterialCommunityIcons name={icon as any} size={48} color={Colors.textMuted} />
+      </Animated.View>
+      <Text style={styles.title}>{title}</Text>
     <Text style={styles.subtitle}>{subtitle}</Text>
-    {actionLabel && onAction && (
-      <Button label={actionLabel} onPress={onAction} style={styles.button} />
-    )}
-  </View>
-);
+      {actionLabel && onAction && (
+        <Button label={actionLabel} onPress={onAction} style={styles.button} />
+      )}
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   container: {
