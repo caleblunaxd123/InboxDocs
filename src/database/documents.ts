@@ -1,5 +1,6 @@
 import { getDatabase } from './schema';
 import { Document, DocumentFilters, CategoryId } from '../types';
+import * as FileSystem from 'expo-file-system/legacy';
 
 function rowToDocument(row: any): Document {
   return {
@@ -73,9 +74,22 @@ export async function updateDocumentNotes(id: string, notes: string): Promise<vo
   await db.runAsync('UPDATE documents SET notes = ? WHERE id = ?', [notes, id]);
 }
 
+export async function deleteAllDocuments(): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync('DELETE FROM documents');
+}
+
 export async function deleteDocument(id: string): Promise<void> {
   const db = await getDatabase();
+  const row: any = await db.getFirstAsync('SELECT file_path FROM documents WHERE id = ?', [id]);
   await db.runAsync('DELETE FROM documents WHERE id = ?', [id]);
+  if (row?.file_path) {
+    try {
+      await FileSystem.deleteAsync(row.file_path, { idempotent: true });
+    } catch (e) {
+      console.warn('[deleteDocument] Could not delete file:', e);
+    }
+  }
 }
 
 export async function getFilteredDocuments(filters: DocumentFilters): Promise<Document[]> {
@@ -149,10 +163,90 @@ export async function getFilteredDocuments(filters: DocumentFilters): Promise<Do
   return rows.map(rowToDocument);
 }
 
+export async function getFilteredDocumentsPage(
+  filters: DocumentFilters,
+  offset: number,
+  limit: number
+): Promise<Document[]> {
+  const db = await getDatabase();
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (filters.category !== 'all') {
+    conditions.push('d.category = ?');
+    params.push(filters.category);
+  }
+  if (filters.provider !== 'all') {
+    conditions.push('a.provider = ?');
+    params.push(filters.provider);
+  }
+  if (filters.fileType !== 'all') {
+    const extMap: Record<string, string[]> = {
+      pdf: ['pdf'],
+      images: ['jpg', 'jpeg', 'png', 'heic', 'webp'],
+      word: ['docx'],
+      excel: ['xlsx'],
+      xml: ['xml', 'txt'],
+    };
+    const exts = extMap[filters.fileType] ?? [];
+    if (exts.length > 0) {
+      conditions.push(`d.file_extension IN (${exts.map(() => '?').join(',')})`);
+      params.push(...exts);
+    }
+  }
+  if (filters.dateRange !== 'all') {
+    const now = Date.now();
+    const daysMap: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 };
+    const days = daysMap[filters.dateRange];
+    if (days) {
+      conditions.push('d.email_date >= ?');
+      params.push(now - days * 24 * 60 * 60 * 1000);
+    }
+  }
+  if (filters.starredOnly) {
+    conditions.push('d.is_starred = 1');
+  }
+  if (filters.searchQuery.length >= 2) {
+    const q = `%${filters.searchQuery}%`;
+    conditions.push('(d.original_filename LIKE ? OR d.sender_name LIKE ? OR d.sender_email LIKE ? OR d.subject LIKE ?)');
+    params.push(q, q, q, q);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const sortMap: Record<string, string> = {
+    date_desc: 'd.email_date DESC',
+    date_asc: 'd.email_date ASC',
+    name_asc: 'd.original_filename ASC',
+    size_desc: 'd.file_size DESC',
+    sender: 'd.sender_name ASC',
+  };
+  const orderBy = sortMap[filters.sortBy] ?? 'd.email_date DESC';
+
+  params.push(limit, offset);
+  const rows = await db.getAllAsync(
+    `SELECT d.* FROM documents d
+     LEFT JOIN accounts a ON d.account_id = a.id
+     ${where}
+     ORDER BY ${orderBy}
+     LIMIT ? OFFSET ?`,
+    params
+  );
+  return rows.map(rowToDocument);
+}
+
 export async function getRecentDocuments(limit = 10): Promise<Document[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync(
     'SELECT * FROM documents ORDER BY downloaded_at DESC LIMIT ?',
+    [limit]
+  );
+  return rows.map(rowToDocument);
+}
+
+export async function getStarredDocuments(limit = 20): Promise<Document[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync(
+    'SELECT * FROM documents WHERE is_starred = 1 ORDER BY downloaded_at DESC LIMIT ?',
     [limit]
   );
   return rows.map(rowToDocument);

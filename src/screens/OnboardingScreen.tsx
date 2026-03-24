@@ -3,13 +3,14 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   Animated,
   TouchableOpacity,
   Alert,
   Dimensions,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Typography, BorderRadius, Shadows } from '../utils/theme';
@@ -29,11 +30,24 @@ const VALUE_PROPS = [
   { icon: 'magnify', text: 'Encuentra cualquier documento al instante' },
 ];
 
-export default function OnboardingScreen() {
-  const { addAccount, setInitialized } = useAppStore();
-  const [loadingProvider, setLoadingProvider] = useState<'gmail' | 'outlook' | null>(null);
+const RANGE_OPTIONS = [
+  { label: 'Últimos 30 días', days: 30 },
+  { label: 'Últimos 3 meses', days: 90 },
+  { label: 'Últimos 6 meses', days: 180 },
+  { label: 'Último año', days: 365 },
+  { label: 'Todo el historial', days: 365 * 5 },
+];
 
-  const fadeAnims = VALUE_PROPS.map(() => useRef(new Animated.Value(0)).current);
+export default function OnboardingScreen() {
+  const { addAccount } = useAppStore();
+  const [loadingProvider, setLoadingProvider] = useState<'gmail' | 'outlook' | null>(null);
+  const [rangeModal, setRangeModal] = useState(false);
+  const [pendingAccount, setPendingAccount] = useState<Account | null>(null);
+
+  const fadeAnim0 = useRef(new Animated.Value(0)).current;
+  const fadeAnim1 = useRef(new Animated.Value(0)).current;
+  const fadeAnim2 = useRef(new Animated.Value(0)).current;
+  const fadeAnims = [fadeAnim0, fadeAnim1, fadeAnim2];
   const cardAnim = useRef(new Animated.Value(60)).current;
   const cardOpacity = useRef(new Animated.Value(0)).current;
 
@@ -87,8 +101,8 @@ export default function OnboardingScreen() {
         createdAt: Date.now(),
       };
 
-      await upsertAccount(account);
-      addAccount(account);
+      setPendingAccount(account);
+      setRangeModal(true);
     } catch (err: any) {
       Alert.alert(
         'Error de conexión',
@@ -97,6 +111,18 @@ export default function OnboardingScreen() {
     } finally {
       setLoadingProvider(null);
     }
+  }
+
+  async function handleSelectRange(days: number) {
+    if (!pendingAccount) return;
+    const account: Account = {
+      ...pendingAccount,
+      syncFromDate: format(subDays(new Date(), days), 'yyyy-MM-dd'),
+    };
+    setRangeModal(false);
+    setPendingAccount(null);
+    await upsertAccount(account);
+    addAccount(account);
   }
 
   return (
@@ -164,6 +190,30 @@ export default function OnboardingScreen() {
           </Text>
         </Animated.View>
       </SafeAreaView>
+
+      {/* Range Selector Modal */}
+      <Modal visible={rangeModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>¿Desde cuándo importar?</Text>
+            <Text style={styles.modalSubtitle}>
+              Elige el rango de correos que quieres escanear
+            </Text>
+            {RANGE_OPTIONS.map((opt) => (
+              <TouchableOpacity
+                key={opt.days}
+                style={styles.rangeOption}
+                onPress={() => handleSelectRange(opt.days)}
+                activeOpacity={0.75}
+              >
+                <MaterialCommunityIcons name="calendar-range" size={18} color={Colors.primary} />
+                <Text style={styles.rangeLabel}>{opt.label}</Text>
+                <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -255,4 +305,32 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: Spacing.xs,
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
+  },
+  modalCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.sheet,
+    padding: Spacing.xl,
+    width: '100%',
+    gap: Spacing.sm,
+    ...Shadows.large,
+  },
+  modalTitle: { ...Typography.headingM, color: Colors.textPrimary, marginBottom: Spacing.xs },
+  modalSubtitle: { ...Typography.bodyM, color: Colors.textSecondary, marginBottom: Spacing.sm },
+  rangeOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.input,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  rangeLabel: { ...Typography.bodyM, color: Colors.textPrimary, flex: 1 },
 });

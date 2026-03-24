@@ -19,7 +19,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#1E40AF",
-        "foregroundImage": "./assets/adaptive-icon.png"
+        "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "package": "com.inboxdocs.app",
       "permissions": [
@@ -34,8 +34,6 @@
       "expo-sqlite",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-sharing",
-      "expo-image",
       [
         "expo-notifications",
         {

@@ -11,7 +11,19 @@ import OnboardingScreen from '../screens/OnboardingScreen';
 import HomeScreen from '../screens/HomeScreen';
 import RepositoryScreen from '../screens/RepositoryScreen';
 import DocumentDetailScreen from '../screens/DocumentDetailScreen';
+import DocumentViewerScreen from '../screens/DocumentViewerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+
+export type RootStackParams = {
+  Main: undefined;
+  DocumentDetail: { documentId: string };
+  DocumentViewer: {
+    filePath: string;
+    filename: string;
+    mimeType: string;
+    fileExtension: string;
+  };
+};
 
 export type AuthStackParams = {
   Onboarding: undefined;
@@ -23,23 +35,9 @@ export type MainTabParams = {
   Settings: undefined;
 };
 
-export type RepositoryStackParams = {
-  RepositoryList: undefined;
-  DocumentDetail: { documentId: string };
-};
-
+const RootStack = createStackNavigator<RootStackParams>();
 const AuthStack = createStackNavigator<AuthStackParams>();
 const Tab = createBottomTabNavigator<MainTabParams>();
-const RepositoryStack = createStackNavigator<RepositoryStackParams>();
-
-function RepositoryNavigator() {
-  return (
-    <RepositoryStack.Navigator screenOptions={{ headerShown: false }}>
-      <RepositoryStack.Screen name="RepositoryList" component={RepositoryScreen} />
-      <RepositoryStack.Screen name="DocumentDetail" component={DocumentDetailScreen} />
-    </RepositoryStack.Navigator>
-  );
-}
 
 function MainTabs() {
   return (
@@ -52,6 +50,11 @@ function MainTabs() {
           borderTopColor: Colors.border,
           backgroundColor: Colors.surface,
           paddingBottom: 4,
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
         },
         tabBarLabelStyle: {
           ...Typography.caption,
@@ -70,7 +73,7 @@ function MainTabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: 'Inicio' }} />
-      <Tab.Screen name="Repository" component={RepositoryNavigator} options={{ tabBarLabel: 'Documentos' }} />
+      <Tab.Screen name="Repository" component={RepositoryScreen} options={{ tabBarLabel: 'Documentos' }} />
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ tabBarLabel: 'Ajustes' }} />
     </Tab.Navigator>
   );
@@ -85,7 +88,19 @@ export default function AppNavigator() {
   return (
     <NavigationContainer>
       {isAuthenticated ? (
-        <MainTabs />
+        <RootStack.Navigator screenOptions={{ headerShown: false }}>
+          <RootStack.Screen name="Main" component={MainTabs} />
+          <RootStack.Screen
+            name="DocumentDetail"
+            component={DocumentDetailScreen}
+            options={{ presentation: 'card', gestureEnabled: true }}
+          />
+          <RootStack.Screen
+            name="DocumentViewer"
+            component={DocumentViewerScreen}
+            options={{ presentation: 'modal', gestureEnabled: true, headerShown: false }}
+          />
+        </RootStack.Navigator>
       ) : (
         <AuthStack.Navigator screenOptions={{ headerShown: false }}>
           <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />

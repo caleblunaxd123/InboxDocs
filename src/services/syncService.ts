@@ -67,20 +67,40 @@ export async function syncGmailAccount(
     headers: { Authorization: `Bearer ${account.accessTokenEncrypted}` },
   });
 
+  api.interceptors.response.use(
+    (r) => r,
+    (err) => {
+      if (err.response?.status === 401) {
+        const authErr: any = new Error('Sesión expirada. Reconecta tu cuenta para continuar.');
+        authErr.code = 'SESSION_EXPIRED';
+        authErr.accountId = account.id;
+        throw authErr;
+      }
+      throw err;
+    }
+  );
+
   let pageToken: string | undefined;
   let downloaded = 0;
-  const sinceDate = account.lastSyncAt
-    ? new Date(account.lastSyncAt)
-    : new Date(Date.now() - settings.default_sync_from_days * 24 * 60 * 60 * 1000);
+  const syncFromDate = new Date(account.syncFromDate);
+  const sinceDate =
+    account.lastSyncAt && account.lastSyncAt < Date.now() - 5 * 60 * 1000
+      ? new Date(account.lastSyncAt)
+      : syncFromDate;
 
   const afterQuery = `after:${Math.floor(sinceDate.getTime() / 1000)} has:attachment`;
+
+  console.log(`[Sync] Query: ${afterQuery}`);
+  console.log(`[Sync] Allowed extensions:`, [...allowed]);
 
   do {
     const listRes = await api.get('/users/me/messages', {
       params: { q: afterQuery, maxResults: 50, pageToken },
     });
+    console.log(`[Sync] Gmail list response:`, JSON.stringify(listRes.data).slice(0, 300));
     const messages: { id: string }[] = listRes.data.messages ?? [];
     pageToken = listRes.data.nextPageToken;
+    console.log(`[Sync] Messages found: ${messages.length}`);
 
     progress.emailsScanned += messages.length;
 
@@ -91,7 +111,7 @@ export async function syncGmailAccount(
       await new Promise((r) => setTimeout(r, 100));
 
       const msgRes = await api.get(`/users/me/messages/${msg.id}`, {
-        params: { format: 'metadata', metadataHeaders: ['Subject', 'From', 'Date'] },
+        params: { format: 'full' },
       });
 
       const headers: { name: string; value: string }[] = msgRes.data.payload?.headers ?? [];
@@ -110,11 +130,21 @@ export async function syncGmailAccount(
 
       const snippet = msgRes.data.snippet ?? '';
 
-      // Get attachments
-      const parts = msgRes.data.payload?.parts ?? [];
-      const attachments = parts.filter(
-        (p: any) => p.filename && p.body?.attachmentId
-      );
+      // Collect all parts recursively (handles nested multipart messages)
+      function collectParts(payload: any): any[] {
+        if (!payload) return [];
+        const result: any[] = [];
+        if (payload.filename && payload.body?.attachmentId) {
+          result.push(payload);
+        }
+        for (const part of payload.parts ?? []) {
+          result.push(...collectParts(part));
+        }
+        return result;
+      }
+
+      const attachments = collectParts(msgRes.data.payload);
+      console.log(`[Sync] Message ${msg.id}: ${attachments.length} attachments found`);
 
       for (const part of attachments) {
         const filename: string = part.filename;
@@ -125,12 +155,15 @@ export async function syncGmailAccount(
         if (!allowed.has(ext)) continue;
         if (size > maxSizeBytes) continue;
 
-        progress.documentsFound++;
-        progress.currentAction = `Descargando: ${filename}`;
+        progress.currentAction = `Analizando: ${filename}`;
         onProgress({ ...progress });
 
         const exists = await documentExists(account.id, msg.id, part.body.attachmentId);
         if (exists) continue;
+
+        progress.documentsFound++;
+        progress.currentAction = `Descargando: ${filename}`;
+        onProgress({ ...progress });
 
         try {
           const attRes = await api.get(
@@ -213,9 +246,24 @@ export async function syncOutlookAccount(
     headers: { Authorization: `Bearer ${account.accessTokenEncrypted}` },
   });
 
-  const sinceDate = account.lastSyncAt
-    ? new Date(account.lastSyncAt)
-    : new Date(Date.now() - settings.default_sync_from_days * 24 * 60 * 60 * 1000);
+  api.interceptors.response.use(
+    (r) => r,
+    (err) => {
+      if (err.response?.status === 401) {
+        const authErr: any = new Error('Sesión expirada. Reconecta tu cuenta para continuar.');
+        authErr.code = 'SESSION_EXPIRED';
+        authErr.accountId = account.id;
+        throw authErr;
+      }
+      throw err;
+    }
+  );
+
+  const syncFromDate2 = new Date(account.syncFromDate);
+  const sinceDate =
+    account.lastSyncAt && account.lastSyncAt < Date.now() - 5 * 60 * 1000
+      ? new Date(account.lastSyncAt)
+      : syncFromDate2;
 
   let nextLink: string | undefined = undefined;
   let downloaded = 0;
@@ -262,12 +310,15 @@ export async function syncOutlookAccount(
         if (!allowed.has(ext)) continue;
         if (size > maxSizeBytes) continue;
 
-        progress.documentsFound++;
-        progress.currentAction = `Descargando: ${filename}`;
+        progress.currentAction = `Analizando: ${filename}`;
         onProgress({ ...progress });
 
         const exists = await documentExists(account.id, msg.id, att.id);
         if (exists) continue;
+
+        progress.documentsFound++;
+        progress.currentAction = `Descargando: ${filename}`;
+        onProgress({ ...progress });
 
         try {
           const contentRes = await api.get(`/me/messages/${msg.id}/attachments/${att.id}/$value`, {

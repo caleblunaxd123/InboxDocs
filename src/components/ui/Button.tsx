@@ -6,8 +6,11 @@ import {
   ActivityIndicator,
   ViewStyle,
   TextStyle,
+  Animated,
 } from 'react-native';
 import { Colors, BorderRadius, Spacing, Typography } from '../../utils/theme';
+
+const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 
 type Variant = 'primary' | 'secondary' | 'outline' | 'danger' | 'ghost';
 type Size = 'sm' | 'md' | 'lg';
@@ -36,17 +39,39 @@ export const Button: React.FC<ButtonProps> = ({
   icon,
 }) => {
   const isDisabled = disabled || loading;
+  const scale = React.useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    if (!isDisabled) {
+      Animated.spring(scale, {
+        toValue: 0.96,
+        useNativeDriver: true,
+      }).start();
+    }
+  };
+
+  const handlePressOut = () => {
+    if (!isDisabled) {
+      Animated.spring(scale, {
+        toValue: 1,
+        useNativeDriver: true,
+      }).start();
+    }
+  };
 
   return (
-    <TouchableOpacity
+    <AnimatedTouchableOpacity
       style={[
         styles.base,
         styles[variant],
         styles[`size_${size}`],
         isDisabled && styles.disabled,
+        { transform: [{ scale }] },
         style,
       ]}
       onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       disabled={isDisabled}
       activeOpacity={0.8}
     >
@@ -63,7 +88,7 @@ export const Button: React.FC<ButtonProps> = ({
           </Text>
         </>
       )}
-    </TouchableOpacity>
+    </AnimatedTouchableOpacity>
   );
 };
 
