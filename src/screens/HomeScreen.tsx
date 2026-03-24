@@ -263,6 +263,26 @@ export default function HomeScreen() {
           <StatItem icon="account-multiple-outline" label="Cuentas" value={String(accounts.length)} />
         </FadeInUpView>
 
+        {/* First-use banner: shown only when connected but never synced */}
+        {totalDocuments === 0 && accounts.some(a => a.lastSyncAt === null) && (
+          <FadeInUpView delay={150}>
+            <View style={[styles.firstUseBanner, { borderColor: theme.primary + '40', backgroundColor: theme.primary + '10' }]}>
+              <View style={[styles.firstUseBannerIconWrap, { backgroundColor: theme.primary + '20' }]}>
+                <MaterialCommunityIcons name="rocket-launch-outline" size={22} color={theme.primary} />
+              </View>
+              <View style={styles.firstUseBannerBody}>
+                <Text style={[styles.firstUseBannerTitle, { color: theme.textPrimary }]}>
+                  ¡Cuenta conectada!
+                </Text>
+                <Text style={[styles.firstUseBannerText, { color: theme.textSecondary }]}>
+                  Pulsa "Sincronizar ahora" para importar tus documentos
+                </Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-down" size={20} color={theme.primary} />
+            </View>
+          </FadeInUpView>
+        )}
+
         {/* Accounts Section */}
         <FadeInUpView delay={200}>
           <SectionHeader title="Cuentas Conectadas" />
@@ -699,6 +719,35 @@ const styles = StyleSheet.create({
     padding: Spacing.base,
     marginBottom: Spacing.xl,
     ...Shadows.subtle,
+  },
+  firstUseBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    borderRadius: BorderRadius.card,
+    borderWidth: 1.5,
+    padding: Spacing.base,
+    marginBottom: Spacing.xl,
+  },
+  firstUseBannerIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  firstUseBannerBody: {
+    flex: 1,
+    gap: 2,
+  },
+  firstUseBannerTitle: {
+    ...Typography.bodyM,
+    fontWeight: '700',
+  },
+  firstUseBannerText: {
+    ...Typography.caption,
+    lineHeight: 16,
   },
   statItem: { flex: 1, alignItems: 'center', gap: 4 },
   statDivider: { width: 1, backgroundColor: Colors.border },

@@ -6,7 +6,7 @@ import { StyleSheet } from 'react-native';
 import AppNavigator from './src/navigation';
 import { initializeDatabase } from './src/database/schema';
 import { getAllAccounts } from './src/database/accounts';
-import { getAllSettings } from './src/database/settings';
+import { getAllSettings, getSetting } from './src/database/settings';
 import { getRecentDocuments, getDocumentStats } from './src/database/documents';
 import { useAppStore } from './src/store/useAppStore';
 import { requestNotificationPermissions } from './src/services/notificationService';
@@ -18,6 +18,7 @@ function AppBootstrap() {
     setRecentDocuments,
     setStats,
     setSettings,
+    setHasSeenWalkthrough,
     settings,
     accounts,
   } = useAppStore();
@@ -34,6 +35,10 @@ function AppBootstrap() {
       // Load accounts
       const accs = await getAllAccounts();
       setAccounts(accs);
+
+      // Load walkthrough flag
+      const walkthroughSeen = await getSetting('has_seen_walkthrough');
+      setHasSeenWalkthrough(walkthroughSeen === 'true');
 
       // Load settings
       const s = await getAllSettings();

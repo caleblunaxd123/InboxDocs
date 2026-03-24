@@ -9,6 +9,7 @@ import { Colors, Typography } from '../utils/theme';
 import { BiometricLock } from '../components/ui/BiometricLock';
 
 // Screens
+import WalkthroughScreen from '../screens/WalkthroughScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
 import HomeScreen from '../screens/HomeScreen';
 import RepositoryScreen from '../screens/RepositoryScreen';
@@ -29,6 +30,7 @@ export type RootStackParams = {
 };
 
 export type AuthStackParams = {
+  Walkthrough: undefined;
   Onboarding: undefined;
 };
 
@@ -64,29 +66,34 @@ function MainTabs() {
           ...Typography.caption,
           fontWeight: '500',
         },
-        tabBarIcon: ({ color, size }) => {
-          const icons: Record<string, string> = {
-            Home: 'home-outline',
-            Repository: 'folder-outline',
-            Insights: 'chart-box-outline',
-            Settings: 'cog-outline',
+        tabBarIcon: ({ color, size, focused }) => {
+          const icons: Record<string, { outline: string; filled: string }> = {
+            Home: { outline: 'home-outline', filled: 'home' },
+            Repository: { outline: 'folder-outline', filled: 'folder' },
+            Insights: { outline: 'chart-box-outline', filled: 'chart-box' },
+            Settings: { outline: 'cog-outline', filled: 'cog' },
           };
+          const iconSet = icons[route.name];
           return (
-            <MaterialCommunityIcons name={icons[route.name] as any} size={size} color={color} />
+            <MaterialCommunityIcons
+              name={(focused ? iconSet.filled : iconSet.outline) as any}
+              size={size}
+              color={color}
+            />
           );
         },
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: 'Inicio' }} />
       <Tab.Screen name="Repository" component={RepositoryScreen} options={{ tabBarLabel: 'Documentos' }} />
-      <Tab.Screen name="Insights" component={InsightsScreen} options={{ tabBarLabel: 'Insights' }} />
+      <Tab.Screen name="Insights" component={InsightsScreen} options={{ tabBarLabel: 'Estadísticas' }} />
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ tabBarLabel: 'Ajustes' }} />
     </Tab.Navigator>
   );
 }
 
 export default function AppNavigator() {
-  const { accounts, isInitialized, settings } = useAppStore();
+  const { accounts, isInitialized, settings, hasSeenWalkthrough } = useAppStore();
   const isAuthenticated = accounts.length > 0;
   const [locked, setLocked] = React.useState(false);
   // Timestamp when app went to background — used to ignore auth-dialog AppState flickers
@@ -104,12 +111,10 @@ export default function AppNavigator() {
   React.useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background') {
-        // Record when we truly went to background
         backgroundedAt.current = Date.now();
       } else if (state === 'active' && settings?.biometricsEnabled) {
         const bgTime = backgroundedAt.current;
         backgroundedAt.current = null;
-        // Auth dialogs cause inactive→active in <500ms — only lock after real backgrounding
         if (bgTime && Date.now() - bgTime > 2000) {
           setLocked(true);
         }
@@ -138,7 +143,15 @@ export default function AppNavigator() {
             />
           </RootStack.Navigator>
         ) : (
-          <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+          <AuthStack.Navigator
+            screenOptions={{ headerShown: false, animationEnabled: true }}
+            initialRouteName={hasSeenWalkthrough ? 'Onboarding' : 'Walkthrough'}
+          >
+            <AuthStack.Screen
+              name="Walkthrough"
+              component={WalkthroughScreen}
+              options={{ gestureEnabled: false }}
+            />
             <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
           </AuthStack.Navigator>
         )}
