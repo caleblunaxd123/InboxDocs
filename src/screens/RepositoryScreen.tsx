@@ -60,7 +60,7 @@ const FILE_TYPE_CHIPS = [
 export default function RepositoryScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
-  const { filters, setFilter, resetFilters, documents, setDocuments, removeDocument } = useAppStore();
+  const { filters, setFilter, resetFilters, documents, setDocuments, removeDocument, syncState } = useAppStore();
   const insets = useSafeAreaInsets();
   const [searchFocused, setSearchFocused] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,6 +88,18 @@ export default function RepositoryScreen() {
   const offsetRef = useRef(0);
   const docsRef = useRef<Document[]>([]);
   docsRef.current = documents;
+
+  // Reload documents automatically when any sync finishes
+  const wasSyncingRef = useRef(false);
+  useEffect(() => {
+    const isSyncingNow = Object.values(syncState).some((s) => s?.isSyncing);
+    if (wasSyncingRef.current && !isSyncingNow) {
+      // Sync just completed — refresh the list
+      offsetRef.current = 0;
+      loadDocuments(true);
+    }
+    wasSyncingRef.current = isSyncingNow;
+  }, [syncState]);
 
   const checkFileAvailability = useCallback(async (docs: Document[]) => {
     if (docs.length === 0) return;

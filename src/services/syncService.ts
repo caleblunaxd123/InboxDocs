@@ -83,10 +83,10 @@ export async function syncGmailAccount(
   let pageToken: string | undefined;
   let downloaded = 0;
   const syncFromDate = new Date(account.syncFromDate);
-  const sinceDate =
-    account.lastSyncAt && account.lastSyncAt < Date.now() - 5 * 60 * 1000
-      ? new Date(account.lastSyncAt)
-      : syncFromDate;
+  // Use lastSyncAt for incremental sync; fall back to syncFromDate for first/reset sync
+  const sinceDate = account.lastSyncAt
+    ? new Date(account.lastSyncAt)
+    : syncFromDate;
 
   const afterQuery = `after:${Math.floor(sinceDate.getTime() / 1000)} has:attachment`;
 
@@ -260,10 +260,10 @@ export async function syncOutlookAccount(
   );
 
   const syncFromDate2 = new Date(account.syncFromDate);
-  const sinceDate =
-    account.lastSyncAt && account.lastSyncAt < Date.now() - 5 * 60 * 1000
-      ? new Date(account.lastSyncAt)
-      : syncFromDate2;
+  // Use lastSyncAt for incremental sync; fall back to syncFromDate for first/reset sync
+  const sinceDate = account.lastSyncAt
+    ? new Date(account.lastSyncAt)
+    : syncFromDate2;
 
   let nextLink: string | undefined = undefined;
   let downloaded = 0;

@@ -72,8 +72,12 @@ export default function HomeScreen() {
   }, []);
 
   const handleSyncAccount = useCallback(
-    async (accountId: string) => {
-      const account = accounts.find((a) => a.id === accountId);
+    async (accountId: string, accountOverride?: Account) => {
+      // Guard: prevent double sync
+      if (useAppStore.getState().syncState[accountId]?.isSyncing) return;
+
+      // Use override (fresh account) if provided, else find in store
+      const account = accountOverride ?? accounts.find((a) => a.id === accountId);
       if (!account) return;
 
       setSyncState(accountId, {
@@ -177,12 +181,19 @@ export default function HomeScreen() {
     setSyncRangeModal(null);
     const acc = accounts.find(a => a.id === accountId);
     if (!acc) return;
+
+    // Build fresh account so the sync uses the new date — avoids stale closure issue
+    let freshAccount: Account = { ...acc };
     if (days !== null) {
       const newDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
+      freshAccount = { ...acc, syncFromDate: newDate, lastSyncAt: null };
+      // Persist to store and DB
       updateAccount(accountId, { syncFromDate: newDate, lastSyncAt: null });
-      await import('../database/accounts').then(m => m.upsertAccount({ ...acc, syncFromDate: newDate, lastSyncAt: null }));
+      await import('../database/accounts').then(m => m.upsertAccount(freshAccount));
     }
-    await handleSyncAccount(accountId);
+
+    // Pass freshAccount directly so the correct syncFromDate / lastSyncAt is used
+    await handleSyncAccount(accountId, freshAccount);
   }, [accounts, handleSyncAccount, updateAccount]);
 
   const onRefresh = useCallback(async () => {
