@@ -259,3 +259,48 @@ export async function getDocumentStats(): Promise<{ total: number; totalSize: nu
   );
   return { total: row?.total ?? 0, totalSize: row?.total_size ?? 0 };
 }
+
+export async function getDocumentsByCategory(): Promise<{ category: string; count: number; totalSize: number }[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync(
+    `SELECT category, COUNT(*) as count, COALESCE(SUM(file_size), 0) as total_size
+     FROM documents GROUP BY category ORDER BY count DESC`
+  );
+  return (rows as any[]).map(r => ({ category: r.category, count: r.count, totalSize: r.total_size }));
+}
+
+export async function getDocumentsByMonth(months = 12): Promise<{ month: string; count: number }[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync(
+    `SELECT strftime('%Y-%m', datetime(email_date/1000, 'unixepoch')) as month, COUNT(*) as count
+     FROM documents
+     WHERE email_date >= ?
+     GROUP BY month ORDER BY month ASC`,
+    [Date.now() - months * 30 * 24 * 60 * 60 * 1000]
+  );
+  return (rows as any[]).map(r => ({ month: r.month, count: r.count }));
+}
+
+export async function getTopSenders(limit = 8): Promise<{ name: string; email: string; count: number; totalSize: number }[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync(
+    `SELECT
+       COALESCE(NULLIF(sender_name, ''), sender_email) as name,
+       sender_email as email,
+       COUNT(*) as count,
+       COALESCE(SUM(file_size), 0) as total_size
+     FROM documents
+     WHERE sender_email IS NOT NULL AND sender_email != ''
+     GROUP BY sender_email ORDER BY count DESC LIMIT ?`,
+    [limit]
+  );
+  return (rows as any[]).map(r => ({ name: r.name, email: r.email, count: r.count, totalSize: r.total_size }));
+}
+
+export async function getDocumentsByFileType(): Promise<{ ext: string; count: number }[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync(
+    `SELECT file_extension as ext, COUNT(*) as count FROM documents GROUP BY file_extension ORDER BY count DESC`
+  );
+  return (rows as any[]).map(r => ({ ext: r.ext, count: r.count }));
+}

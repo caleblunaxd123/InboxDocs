@@ -33,6 +33,7 @@ import { exportDocumentsCsv } from '../utils/exportCsv';
 import { formatBytes } from '../utils/format';
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
+import * as LocalAuthentication from 'expo-local-authentication';
 
 const ATTACHMENT_DIR = `${FileSystem.documentDirectory}inboxdocs/attachments/`;
 const VERSION = '1.0.0';
@@ -44,6 +45,71 @@ const RANGE_OPTIONS = [
   { label: 'Último año', days: 365 },
   { label: 'Todo el historial', days: 365 * 5 },
 ];
+
+function BiometricToggleRow({ settings, updateSetting }: { settings: AppSettings | null; updateSetting: any }) {
+  const theme = useTheme();
+  const [available, setAvailable] = useState(false);
+  const [biometricType, setBiometricType] = useState<string>('Biometría');
+
+  useEffect(() => {
+    checkAvailability();
+  }, []);
+
+  async function checkAvailability() {
+    try {
+      const has = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+      setAvailable(has && enrolled);
+      if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+        setBiometricType('Face ID / Facial');
+      } else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
+        setBiometricType('Huella dactilar');
+      }
+    } catch {
+      setAvailable(false);
+    }
+  }
+
+  async function handleToggle(value: boolean) {
+    if (value) {
+      // Verify biometrics work before enabling
+      try {
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Confirma para activar la protección biométrica',
+          cancelLabel: 'Cancelar',
+          disableDeviceFallback: false,
+        });
+        if (!result.success) return;
+      } catch {
+        return;
+      }
+    }
+    await setSetting('biometrics_enabled', value ? 'true' : 'false');
+    updateSetting('biometricsEnabled', value);
+  }
+
+  return (
+    <View style={styles.settingRow}>
+      <View style={[styles.rowIcon, { backgroundColor: '#6366F120' }]}>
+        <MaterialCommunityIcons name="shield-lock-outline" size={16} color="#6366F1" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.settingLabel, { color: theme.textPrimary }]}>{biometricType}</Text>
+        <Text style={[styles.settingDescription, { color: theme.textMuted }]}>
+          {available ? 'Bloquea la app al salir' : 'No disponible en este dispositivo'}
+        </Text>
+      </View>
+      <Switch
+        value={available && (settings?.biometricsEnabled ?? false)}
+        onValueChange={handleToggle}
+        disabled={!available}
+        trackColor={{ false: '#E5E7EB', true: Colors.primary + '60' }}
+        thumbColor={settings?.biometricsEnabled ? Colors.primary : '#9CA3AF'}
+      />
+    </View>
+  );
+}
 
 export default function SettingsScreen() {
   const theme = useTheme();
@@ -281,6 +347,12 @@ export default function SettingsScreen() {
               ))}
             </View>
           </View>
+        </SettingsCard>
+
+        {/* Security */}
+        <SectionHeader title="Seguridad" theme={theme} />
+        <SettingsCard theme={theme}>
+          <BiometricToggleRow settings={settings} updateSetting={updateSetting} />
         </SettingsCard>
 
         {/* Sync Settings */}
@@ -524,6 +596,8 @@ const styles = StyleSheet.create({
   toggleRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base, paddingVertical: Spacing.md, gap: Spacing.md },
   settingLabel: { ...Typography.bodyM, color: Colors.textPrimary },
   settingHint: { ...Typography.caption, color: Colors.textMuted },
+  settingDescription: { ...Typography.caption, color: Colors.textMuted, marginTop: 2 },
+  settingRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base, paddingVertical: Spacing.md, gap: Spacing.md },
   settingValue: { ...Typography.bodyM, color: Colors.textSecondary },
   apiKeyLabelRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md, marginBottom: Spacing.sm },
   apiKeyRow: { paddingHorizontal: Spacing.base, paddingVertical: Spacing.md, gap: Spacing.sm },

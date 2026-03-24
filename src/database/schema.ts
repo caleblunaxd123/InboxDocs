@@ -106,6 +106,7 @@ export async function initializeDatabase(): Promise<void> {
     theme: 'system',
     max_file_size_mb: '25',
     ai_categorization_enabled: 'true',
+    biometrics_enabled: 'false',
   };
 
   for (const [key, value] of Object.entries(defaults)) {

@@ -3,8 +3,10 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { AppState, AppStateStatus } from 'react-native';
 import { useAppStore } from '../store/useAppStore';
 import { Colors, Typography } from '../utils/theme';
+import { BiometricLock } from '../components/ui/BiometricLock';
 
 // Screens
 import OnboardingScreen from '../screens/OnboardingScreen';
@@ -13,6 +15,7 @@ import RepositoryScreen from '../screens/RepositoryScreen';
 import DocumentDetailScreen from '../screens/DocumentDetailScreen';
 import DocumentViewerScreen from '../screens/DocumentViewerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import InsightsScreen from '../screens/InsightsScreen';
 
 export type RootStackParams = {
   Main: undefined;
@@ -32,6 +35,7 @@ export type AuthStackParams = {
 export type MainTabParams = {
   Home: undefined;
   Repository: undefined;
+  Insights: undefined;
   Settings: undefined;
 };
 
@@ -64,6 +68,7 @@ function MainTabs() {
           const icons: Record<string, string> = {
             Home: 'home-outline',
             Repository: 'folder-outline',
+            Insights: 'chart-box-outline',
             Settings: 'cog-outline',
           };
           return (
@@ -74,38 +79,61 @@ function MainTabs() {
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: 'Inicio' }} />
       <Tab.Screen name="Repository" component={RepositoryScreen} options={{ tabBarLabel: 'Documentos' }} />
+      <Tab.Screen name="Insights" component={InsightsScreen} options={{ tabBarLabel: 'Insights' }} />
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ tabBarLabel: 'Ajustes' }} />
     </Tab.Navigator>
   );
 }
 
 export default function AppNavigator() {
-  const { accounts, isInitialized } = useAppStore();
+  const { accounts, isInitialized, settings } = useAppStore();
   const isAuthenticated = accounts.length > 0;
+  const [locked, setLocked] = React.useState(false);
+
+  // Lock on initial app launch (once initialized and biometrics enabled)
+  React.useEffect(() => {
+    if (!isInitialized) return;
+    if (settings?.biometricsEnabled) {
+      setLocked(true);
+    }
+  }, [isInitialized, settings?.biometricsEnabled]);
+
+  // Lock when app returns to foreground
+  React.useEffect(() => {
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active' && settings?.biometricsEnabled) {
+        setLocked(true);
+      }
+    });
+    return () => sub.remove();
+  }, [settings?.biometricsEnabled]);
 
   if (!isInitialized) return null;
 
   return (
-    <NavigationContainer>
-      {isAuthenticated ? (
-        <RootStack.Navigator screenOptions={{ headerShown: false }}>
-          <RootStack.Screen name="Main" component={MainTabs} />
-          <RootStack.Screen
-            name="DocumentDetail"
-            component={DocumentDetailScreen}
-            options={{ presentation: 'card', gestureEnabled: true }}
-          />
-          <RootStack.Screen
-            name="DocumentViewer"
-            component={DocumentViewerScreen}
-            options={{ presentation: 'modal', gestureEnabled: true, headerShown: false }}
-          />
-        </RootStack.Navigator>
-      ) : (
-        <AuthStack.Navigator screenOptions={{ headerShown: false }}>
-          <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
-        </AuthStack.Navigator>
-      )}
-    </NavigationContainer>
+    <>
+      <NavigationContainer>
+        {isAuthenticated ? (
+          <RootStack.Navigator screenOptions={{ headerShown: false }}>
+            <RootStack.Screen name="Main" component={MainTabs} />
+            <RootStack.Screen
+              name="DocumentDetail"
+              component={DocumentDetailScreen}
+              options={{ presentation: 'card', gestureEnabled: true }}
+            />
+            <RootStack.Screen
+              name="DocumentViewer"
+              component={DocumentViewerScreen}
+              options={{ presentation: 'modal', gestureEnabled: true, headerShown: false }}
+            />
+          </RootStack.Navigator>
+        ) : (
+          <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+            <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
+          </AuthStack.Navigator>
+        )}
+      </NavigationContainer>
+      <BiometricLock visible={locked} onAuthenticated={() => setLocked(false)} />
+    </>
   );
 }
