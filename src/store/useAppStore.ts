@@ -17,11 +17,13 @@ interface AppStore {
   // Auth
   accounts: Account[];
   isInitialized: boolean;
+  hasSeenWalkthrough: boolean;
   setAccounts: (accounts: Account[]) => void;
   addAccount: (account: Account) => void;
   removeAccount: (id: string) => void;
   updateAccount: (id: string, updates: Partial<Account>) => void;
   setInitialized: (value: boolean) => void;
+  setHasSeenWalkthrough: (value: boolean) => void;
 
   // Documents
   documents: Document[];
@@ -68,6 +70,7 @@ export const useAppStore = create<AppStore>((set) => ({
   // Auth
   accounts: [],
   isInitialized: false,
+  hasSeenWalkthrough: false,
   setAccounts: (accounts) => set({ accounts }),
   addAccount: (account) => set((s) => ({ accounts: [...s.accounts, account] })),
   removeAccount: (id) => set((s) => ({ accounts: s.accounts.filter((a) => a.id !== id) })),
@@ -76,6 +79,7 @@ export const useAppStore = create<AppStore>((set) => ({
       accounts: s.accounts.map((a) => (a.id === id ? { ...a, ...updates } : a)),
     })),
   setInitialized: (value) => set({ isInitialized: value }),
+  setHasSeenWalkthrough: (value) => set({ hasSeenWalkthrough: value }),
 
   // Documents
   documents: [],
