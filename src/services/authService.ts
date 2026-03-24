@@ -1,6 +1,5 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
 import { Platform } from 'react-native';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -41,60 +40,59 @@ async function fetchWithTimeout(
   }
 }
 
-const EXPO_PROJECT = '@calebluna41/inboxdocs';
-const PROXY_BASE   = `https://auth.expo.io/${EXPO_PROJECT}`;
+const GOOGLE_AUTH_ENDPOINT  = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
 export async function signInWithGoogle(): Promise<OAuthResult> {
-  const clientId = GOOGLE_CLIENT_ID_WEB;
-  const proxyRedirectUri = PROXY_BASE;
-  const returnUrl = Linking.createURL('expo-auth-session');
+  // Use platform-specific native client ID for PKCE flow (gives refresh tokens)
+  const clientId =
+    Platform.OS === 'ios'     ? GOOGLE_CLIENT_ID_IOS :
+    Platform.OS === 'android' ? GOOGLE_CLIENT_ID_ANDROID :
+                                GOOGLE_CLIENT_ID_WEB;
 
-  const googleAuthUrl =
-    `https://accounts.google.com/o/oauth2/v2/auth` +
-    `?client_id=${encodeURIComponent(clientId)}` +
-    `&redirect_uri=${encodeURIComponent(proxyRedirectUri)}` +
-    `&response_type=token` +
-    `&scope=${encodeURIComponent(GOOGLE_SCOPES.join(' '))}` +
-    `&prompt=select_account`;
+  const redirectUri = AuthSession.makeRedirectUri({ scheme: 'inboxdocs' });
 
-  const startUrl = `${PROXY_BASE}/start?${new URLSearchParams({
-    authUrl: googleAuthUrl,
-    returnUrl,
-  }).toString()}`;
+  const request = new AuthSession.AuthRequest({
+    clientId,
+    scopes: GOOGLE_SCOPES,
+    redirectUri,
+    usePKCE: true,
+    responseType: AuthSession.ResponseType.Code,
+    extraParams: { access_type: 'offline', prompt: 'consent select_account' },
+  });
 
-  const result = await WebBrowser.openAuthSessionAsync(startUrl, returnUrl);
+  await request.makeAuthUrlAsync({ authorizationEndpoint: GOOGLE_AUTH_ENDPOINT });
+  const result = await request.promptAsync({ authorizationEndpoint: GOOGLE_AUTH_ENDPOINT });
 
-  if (result.type !== 'success' || !result.url) {
+  if (result.type !== 'success') {
     throw new Error('Google sign-in cancelado o fallido');
   }
 
-  const urlPart  = result.url.includes('#')
-    ? result.url.split('#')[1]
-    : result.url.split('?')[1] ?? '';
-  const urlParams  = new URLSearchParams(urlPart);
-  const accessToken = urlParams.get('access_token');
-
-  if (!accessToken) {
-    throw new Error('No se recibió el token de acceso de Google');
-  }
+  // Exchange authorization code for tokens (PKCE — no client_secret needed)
+  const tokenResponse = await AuthSession.exchangeCodeAsync(
+    {
+      clientId,
+      code: result.params.code,
+      redirectUri,
+      extraParams: { code_verifier: request.codeVerifier ?? '' },
+    },
+    { tokenEndpoint: GOOGLE_TOKEN_ENDPOINT },
+  );
 
   const profileRes = await fetchWithTimeout(
     'https://www.googleapis.com/oauth2/v2/userinfo',
-    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { headers: { Authorization: `Bearer ${tokenResponse.accessToken}` } },
   );
   if (!profileRes.ok) throw new Error('No se pudo obtener el perfil de Google');
   const profile = await profileRes.json();
 
   return {
-    accessToken,
-    // NOTE: implicit flow does not provide a refresh_token.
-    // The token expires in ~1 hour and the user will need to reconnect.
-    // TODO: Migrate to PKCE (response_type=code) to obtain refresh tokens.
-    refreshToken: '',
-    expiresAt: Date.now() + 3600 * 1000,
-    email: profile.email,
-    displayName: profile.name ?? profile.email,
-    avatarUrl: profile.picture ?? null,
+    accessToken:  tokenResponse.accessToken,
+    refreshToken: tokenResponse.refreshToken ?? '',
+    expiresAt:    Date.now() + (tokenResponse.expiresIn ?? 3600) * 1000,
+    email:        profile.email,
+    displayName:  profile.name ?? profile.email,
+    avatarUrl:    profile.picture ?? null,
   };
 }
 

@@ -10,6 +10,7 @@ import { getRecentDocuments, getDocumentStats } from './src/database/documents';
 import { useAppStore } from './src/store/useAppStore';
 import { requestNotificationPermissions } from './src/services/notificationService';
 import { syncGmailAccount, syncOutlookAccount } from './src/services/syncService';
+import { applyBackgroundSyncFrequency } from './src/services/backgroundSync';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 
 function AppBootstrap() {
@@ -49,6 +50,9 @@ function AppBootstrap() {
       setStats(stats.total, stats.totalSize);
 
       await requestNotificationPermissions();
+
+      // Apply background sync schedule based on persisted setting
+      await applyBackgroundSyncFrequency(s.sync_frequency ?? 'manual');
 
       setInitialized(true);
 

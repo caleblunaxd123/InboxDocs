@@ -19,6 +19,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import { Colors, Spacing, Typography, BorderRadius, Shadows } from '../utils/theme';
 import { useTheme } from '../utils/useTheme';
 import { getFileTypeUI } from '../utils/fileTypes';
+import { getLibBase64 } from '../utils/libCache';
 
 type ViewerParams = {
   filePath: string;
@@ -38,6 +39,13 @@ export default function DocumentViewerScreen() {
   const [base64Data, setBase64Data] = useState<string | null>(null);
   const [dataReady, setDataReady] = useState(false);
   const [fileExists, setFileExists] = useState<boolean | null>(null);
+  const [loadingMessage, setLoadingMessage] = useState('Preparando documento...');
+  const [libOfflineError, setLibOfflineError] = useState(false);
+  // Cached library scripts (base64-encoded, embedded into HTML via data: URI trick)
+  const [pdfJsB64, setPdfJsB64] = useState<string | null>(null);
+  const [workerB64, setWorkerB64] = useState<string | null>(null);
+  const [mammothB64, setMammothB64] = useState<string | null>(null);
+  const [xlsxB64, setXlsxB64] = useState<string | null>(null);
 
   const isPdf = fileExtension === 'pdf';
   const isImage = ['jpg', 'jpeg', 'png', 'heic', 'webp'].includes(fileExtension);
@@ -63,21 +71,50 @@ export default function DocumentViewerScreen() {
           });
           setBase64Data(data);
         }
+
+        // Load viewer libraries from cache (downloads on first use if online)
+        if (isPdf) {
+          setLoadingMessage('Cargando visor PDF...');
+          const [js, worker] = await Promise.all([
+            getLibBase64('pdfjs'),
+            getLibBase64('pdfworker'),
+          ]);
+          setPdfJsB64(js);
+          setWorkerB64(worker);
+        } else if (isDocx) {
+          setLoadingMessage('Cargando visor Word...');
+          const js = await getLibBase64('mammoth');
+          setMammothB64(js);
+        } else if (isXlsx) {
+          setLoadingMessage('Cargando visor Excel...');
+          const js = await getLibBase64('xlsx');
+          setXlsxB64(js);
+        }
+
         setDataReady(true);
-      } catch {
-        setFileExists(false);
+      } catch (err: any) {
+        // If download failed (offline + not cached), show offline error for viewer formats
+        if ((isPdf || isDocx || isXlsx) && !fileExists) {
+          setFileExists(false);
+        } else if (isPdf || isDocx || isXlsx) {
+          // File exists but lib download failed (offline, not cached yet)
+          setLibOfflineError(true);
+          setFileExists(true);
+          setDataReady(true);
+        } else {
+          setFileExists(false);
+        }
       }
     }
     prepare();
   }, [filePath, isPdf, isDocx, isXlsx]);
 
   const pdfJsHtml = useMemo(() => {
-    if (!base64Data) return '';
+    if (!base64Data || !pdfJsB64 || !workerB64) return '';
     return `<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #1e1e2e; padding: 8px; }
@@ -91,55 +128,60 @@ canvas { display: block; margin: 0 auto 10px auto; border-radius: 6px; box-shado
 <div id="loading">⏳ Cargando PDF...</div>
 <div id="error" style="display:none"></div>
 <div id="container"></div>
+<script src="data:text/javascript;base64,${pdfJsB64}"></script>
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const b64 = '${base64Data}';
-const binary = atob(b64);
-const bytes = new Uint8Array(binary.length);
-for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
-  document.getElementById('loading').style.display = 'none';
-  const container = document.getElementById('container');
-  const pageCount = document.createElement('div');
-  pageCount.id = 'pageCount';
-  pageCount.textContent = pdf.numPages + ' página' + (pdf.numPages !== 1 ? 's' : '');
-  container.before(pageCount);
-  const promises = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const p = i;
-    promises.push(pdf.getPage(p).then(function(page) {
-      const vp = page.getViewport({ scale: window.devicePixelRatio * 1.8 });
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = vp.width;
-      canvas.height = vp.height;
-      return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function() {
-        return { page: p, canvas };
-      });
-    }));
-  }
-  Promise.all(promises).then(function(results) {
-    results.sort((a, b) => a.page - b.page);
-    results.forEach(function(r) { container.appendChild(r.canvas); });
+(function() {
+  var workerCode = atob('${workerB64}');
+  var workerBlob = new Blob([workerCode], { type: 'text/javascript' });
+  pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
+  var b64 = '${base64Data}';
+  var binary = atob(b64);
+  var bytes = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
+    document.getElementById('loading').style.display = 'none';
+    var container = document.getElementById('container');
+    var pageCount = document.createElement('div');
+    pageCount.id = 'pageCount';
+    pageCount.textContent = pdf.numPages + ' p\u00e1gina' + (pdf.numPages !== 1 ? 's' : '');
+    container.before(pageCount);
+    var promises = [];
+    for (var p = 1; p <= pdf.numPages; p++) {
+      (function(pageNum) {
+        promises.push(pdf.getPage(pageNum).then(function(page) {
+          var vp = page.getViewport({ scale: window.devicePixelRatio * 1.8 });
+          var canvas = document.createElement('canvas');
+          var ctx = canvas.getContext('2d');
+          canvas.width = vp.width;
+          canvas.height = vp.height;
+          return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function() {
+            return { page: pageNum, canvas: canvas };
+          });
+        }));
+      })(p);
+    }
+    Promise.all(promises).then(function(results) {
+      results.sort(function(a, b) { return a.page - b.page; });
+      results.forEach(function(r) { container.appendChild(r.canvas); });
+    });
+  }).catch(function(err) {
+    document.getElementById('loading').style.display = 'none';
+    var errDiv = document.getElementById('error');
+    errDiv.style.display = 'block';
+    errDiv.textContent = 'Error al renderizar: ' + err.message;
   });
-}).catch(function(err) {
-  document.getElementById('loading').style.display = 'none';
-  const errDiv = document.getElementById('error');
-  errDiv.style.display = 'block';
-  errDiv.textContent = 'Error al renderizar: ' + err.message;
-});
+})();
 </script>
 </body>
 </html>`;
-  }, [base64Data]);
+  }, [base64Data, pdfJsB64, workerB64]);
 
   const mammothHtml = useMemo(() => {
-    if (!base64Data || !isDocx) return '';
+    if (!base64Data || !isDocx || !mammothB64) return '';
     return `<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #f8fafc; padding: 16px; font-family: -apple-system, Arial, sans-serif; font-size: 14px; color: #1e293b; line-height: 1.6; }
@@ -155,20 +197,21 @@ li { margin-bottom: 4px; }
 </style>
 </head>
 <body>
-<div id="loading">⏳ Cargando documento Word...</div>
+<div id="loading">&#x23F3; Cargando documento Word...</div>
 <div id="error" style="display:none"></div>
 <div id="content"></div>
+<script src="data:text/javascript;base64,${mammothB64}"></script>
 <script>
 try {
-  const b64 = '${base64Data}';
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const arrayBuffer = bytes.buffer;
+  var b64 = '${base64Data}';
+  var binary = atob(b64);
+  var bytes = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  var arrayBuffer = bytes.buffer;
   mammoth.convertToHtml({ arrayBuffer: arrayBuffer })
     .then(function(result) {
       document.getElementById('loading').style.display = 'none';
-      document.getElementById('content').innerHTML = result.value || '<p style="color:#64748b;text-align:center;padding:40px">Documento vacío o sin contenido de texto</p>';
+      document.getElementById('content').innerHTML = result.value || '<p style="color:#64748b;text-align:center;padding:40px">Documento vac\u00edo o sin contenido de texto</p>';
     })
     .catch(function(err) {
       document.getElementById('loading').style.display = 'none';
@@ -183,15 +226,14 @@ try {
 </script>
 </body>
 </html>`;
-  }, [base64Data, isDocx]);
+  }, [base64Data, isDocx, mammothB64]);
 
   const xlsxHtml = useMemo(() => {
-    if (!base64Data || !isXlsx) return '';
+    if (!base64Data || !isXlsx || !xlsxB64) return '';
     return `<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #f0fdf4; font-family: -apple-system, Arial, sans-serif; font-size: 12px; }
@@ -207,25 +249,26 @@ tr:nth-child(even) td { background: #f0fdf4; }
 </style>
 </head>
 <body>
-<div id="loading">⏳ Cargando hoja de cálculo...</div>
+<div id="loading">&#x23F3; Cargando hoja de c\u00e1lculo...</div>
 <div id="error" style="display:none"></div>
 <div id="tabs"></div>
 <div id="content"></div>
+<script src="data:text/javascript;base64,${xlsxB64}"></script>
 <script>
 try {
-  const b64 = '${base64Data}';
-  const wb = XLSX.read(b64, { type: 'base64' });
+  var b64 = '${base64Data}';
+  var wb = XLSX.read(b64, { type: 'base64' });
   document.getElementById('loading').style.display = 'none';
-  const tabs = document.getElementById('tabs');
-  const content = document.getElementById('content');
+  var tabs = document.getElementById('tabs');
+  var content = document.getElementById('content');
   function showSheet(name) {
-    const ws = wb.Sheets[name];
-    const html = XLSX.utils.sheet_to_html(ws, { editable: false });
+    var ws = wb.Sheets[name];
+    var html = XLSX.utils.sheet_to_html(ws, { editable: false });
     content.innerHTML = '<div class="table-wrap">' + html + '</div>';
-    document.querySelectorAll('.sheet-tab').forEach(t => t.classList.toggle('active', t.dataset.name === name));
+    document.querySelectorAll('.sheet-tab').forEach(function(t) { t.classList.toggle('active', t.dataset.name === name); });
   }
   wb.SheetNames.forEach(function(name, i) {
-    const tab = document.createElement('span');
+    var tab = document.createElement('span');
     tab.className = 'sheet-tab' + (i === 0 ? ' active' : '');
     tab.dataset.name = name;
     tab.textContent = name;
@@ -241,7 +284,7 @@ try {
 </script>
 </body>
 </html>`;
-  }, [base64Data, isXlsx]);
+  }, [base64Data, isXlsx, xlsxB64]);
 
   const handleOpenExternal = useCallback(async () => {
     try {
@@ -284,12 +327,34 @@ try {
       );
     }
 
-    // Loading base64 data (for PDFs)
+    // Loading base64 data / downloading viewer library (for PDFs/DOCX/XLSX)
     if (!dataReady) {
       return (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
-          <Text style={[styles.statusText, { color: theme.textMuted }]}>Preparando documento...</Text>
+          <Text style={[styles.statusText, { color: theme.textMuted }]}>{loadingMessage}</Text>
+          {loadingMessage.includes('visor') && (
+            <Text style={[styles.errorSub, { color: theme.textMuted, marginTop: 4 }]}>
+              Solo se requiere internet la primera vez
+            </Text>
+          )}
+        </View>
+      );
+    }
+
+    // Viewer library could not be downloaded (offline, not cached yet)
+    if (libOfflineError) {
+      return (
+        <View style={styles.centerContainer}>
+          <MaterialCommunityIcons name="wifi-off" size={56} color={theme.textMuted} />
+          <Text style={[styles.errorTitle, { color: theme.textPrimary }]}>Sin conexión</Text>
+          <Text style={[styles.errorSub, { color: theme.textMuted }]}>
+            La primera vez que abres este tipo de archivo se necesita internet para descargar el visor. Conéctate e intenta de nuevo.
+          </Text>
+          <TouchableOpacity style={[styles.externalBtn, { backgroundColor: theme.primarySubtle }]} onPress={handleOpenExternal} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="open-in-app" size={18} color={theme.primary} />
+            <Text style={[styles.externalBtnText, { color: theme.primary }]}>Abrir con otra app</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -307,17 +372,14 @@ try {
       );
     }
 
-    // ─── PDFs: PDF.js via base64 (works on iOS + Android, avoids onLoadEnd bug) ───
-    if (isPdf && base64Data) {
+    // ─── PDFs: PDF.js via cached scripts (fully offline after first open) ───
+    if (isPdf && pdfJsHtml) {
       return (
         <View style={{ flex: 1 }}>
           {webLoading && (
             <View style={[styles.webLoadingOverlay, { backgroundColor: theme.background }]}>
               <ActivityIndicator size="large" color={theme.primary} />
-              <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                Renderizando PDF...{'\n'}
-                <Text style={{ fontSize: 12, color: theme.textMuted }}>Requiere conexión a internet</Text>
-              </Text>
+              <Text style={[styles.statusText, { color: theme.textMuted }]}>Renderizando PDF...</Text>
             </View>
           )}
           <WebView
@@ -344,17 +406,14 @@ try {
       );
     }
 
-    // ─── DOCX: Mammoth.js via CDN ───
-    if (isDocx && base64Data) {
+    // ─── DOCX: Mammoth.js via cached script (fully offline after first open) ───
+    if (isDocx && mammothHtml) {
       return (
         <View style={{ flex: 1 }}>
           {webLoading && (
-            <View style={styles.webLoadingOverlay}>
-              <ActivityIndicator size="large" color={Colors.primary} />
-              <Text style={styles.statusText}>
-                Procesando Word...{'\n'}
-                <Text style={{ fontSize: 12, color: Colors.textMuted }}>Requiere conexión a internet</Text>
-              </Text>
+            <View style={[styles.webLoadingOverlay, { backgroundColor: theme.background }]}>
+              <ActivityIndicator size="large" color={theme.primary} />
+              <Text style={[styles.statusText, { color: theme.textMuted }]}>Procesando Word...</Text>
             </View>
           )}
           <WebView
@@ -370,17 +429,14 @@ try {
       );
     }
 
-    // ─── XLSX: SheetJS via CDN ───
-    if (isXlsx && base64Data) {
+    // ─── XLSX: SheetJS via cached script (fully offline after first open) ───
+    if (isXlsx && xlsxHtml) {
       return (
         <View style={{ flex: 1 }}>
           {webLoading && (
-            <View style={styles.webLoadingOverlay}>
-              <ActivityIndicator size="large" color={Colors.primary} />
-              <Text style={styles.statusText}>
-                Procesando Excel...{'\n'}
-                <Text style={{ fontSize: 12, color: Colors.textMuted }}>Requiere conexión a internet</Text>
-              </Text>
+            <View style={[styles.webLoadingOverlay, { backgroundColor: theme.background }]}>
+              <ActivityIndicator size="large" color={theme.primary} />
+              <Text style={[styles.statusText, { color: theme.textMuted }]}>Procesando Excel...</Text>
             </View>
           )}
           <WebView
