@@ -45,10 +45,12 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
 export async function signInWithGoogle(): Promise<OAuthResult> {
   // Use platform-specific native client ID for PKCE flow (gives refresh tokens)
+  // Fall back to Web client ID if platform-specific ID is not configured
+  // (Web ID works in Expo Go; native IDs needed only for standalone builds)
   const clientId =
-    Platform.OS === 'ios'     ? GOOGLE_CLIENT_ID_IOS :
-    Platform.OS === 'android' ? GOOGLE_CLIENT_ID_ANDROID :
-                                GOOGLE_CLIENT_ID_WEB;
+    (Platform.OS === 'ios'     && GOOGLE_CLIENT_ID_IOS)     ? GOOGLE_CLIENT_ID_IOS :
+    (Platform.OS === 'android' && GOOGLE_CLIENT_ID_ANDROID) ? GOOGLE_CLIENT_ID_ANDROID :
+                                                               GOOGLE_CLIENT_ID_WEB;
 
   const redirectUri = AuthSession.makeRedirectUri({ scheme: 'inboxdocs' });
 
@@ -99,10 +101,12 @@ export async function signInWithGoogle(): Promise<OAuthResult> {
 export async function refreshGoogleToken(
   refreshToken: string,
 ): Promise<{ accessToken: string; expiresAt: number }> {
+  // Fall back to Web client ID if platform-specific ID is not configured
+  // (Web ID works in Expo Go; native IDs needed only for standalone builds)
   const clientId =
-    Platform.OS === 'ios'     ? GOOGLE_CLIENT_ID_IOS :
-    Platform.OS === 'android' ? GOOGLE_CLIENT_ID_ANDROID :
-                                GOOGLE_CLIENT_ID_WEB;
+    (Platform.OS === 'ios'     && GOOGLE_CLIENT_ID_IOS)     ? GOOGLE_CLIENT_ID_IOS :
+    (Platform.OS === 'android' && GOOGLE_CLIENT_ID_ANDROID) ? GOOGLE_CLIENT_ID_ANDROID :
+                                                               GOOGLE_CLIENT_ID_WEB;
 
   const response = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
     method: 'POST',
