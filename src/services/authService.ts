@@ -1,14 +1,16 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import * as SecureStore from 'expo-secure-store';
+import * as Linking from 'expo-linking';
 import { Platform } from 'react-native';
 
 WebBrowser.maybeCompleteAuthSession();
 
 // ─── Google / Gmail ──────────────────────────────────────────────────────────
 
-const GOOGLE_CLIENT_ID_IOS     = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS     ?? '';
+const GOOGLE_CLIENT_ID_IOS = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS ?? '';
 const GOOGLE_CLIENT_ID_ANDROID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID ?? '';
-const GOOGLE_CLIENT_ID_WEB     = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB     ?? '';
+const GOOGLE_CLIENT_ID_WEB = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB ?? '';
 
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
@@ -25,90 +27,72 @@ export interface OAuthResult {
   avatarUrl: string | null;
 }
 
-/** Fetch wrapper with a configurable timeout (default 15s). */
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit = {},
-  timeoutMs = 15_000,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const GOOGLE_AUTH_ENDPOINT  = 'https://accounts.google.com/o/oauth2/v2/auth';
-const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
+const EXPO_PROJECT = '@calebluna41/inboxdocs';
+const PROXY_BASE = `https://auth.expo.io/${EXPO_PROJECT}`;
 
 export async function signInWithGoogle(): Promise<OAuthResult> {
-  // Use platform-specific native client ID for PKCE flow (gives refresh tokens)
-  // Fall back to Web client ID if platform-specific ID is not configured
-  // (Web ID works in Expo Go; native IDs needed only for standalone builds)
-  const clientId =
-    (Platform.OS === 'ios'     && GOOGLE_CLIENT_ID_IOS)     ? GOOGLE_CLIENT_ID_IOS :
-    (Platform.OS === 'android' && GOOGLE_CLIENT_ID_ANDROID) ? GOOGLE_CLIENT_ID_ANDROID :
-                                                               GOOGLE_CLIENT_ID_WEB;
+  const clientId = GOOGLE_CLIENT_ID_WEB;
 
-  const redirectUri = AuthSession.makeRedirectUri({ scheme: 'inboxdocs' });
+  // The proxy redirect URI (registered in Google Cloud)
+  const proxyRedirectUri = PROXY_BASE;
 
-  const request = new AuthSession.AuthRequest({
-    clientId,
-    scopes: GOOGLE_SCOPES,
-    redirectUri,
-    usePKCE: true,
-    responseType: AuthSession.ResponseType.Code,
-    extraParams: { access_type: 'offline', prompt: 'consent select_account' },
-  });
+  // The return URL where the proxy will send the token back to Expo Go
+  const returnUrl = Linking.createURL('expo-auth-session');
 
-  await request.makeAuthUrlAsync({ authorizationEndpoint: GOOGLE_AUTH_ENDPOINT });
-  const result = await request.promptAsync({ authorizationEndpoint: GOOGLE_AUTH_ENDPOINT });
+  const googleAuthUrl =
+    `https://accounts.google.com/o/oauth2/v2/auth` +
+    `?client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(proxyRedirectUri)}` +
+    `&response_type=token` +
+    `&scope=${encodeURIComponent(GOOGLE_SCOPES.join(' '))}` +
+    `&prompt=select_account`;
 
-  if (result.type !== 'success') {
+  // Build the proxy start URL — it will redirect to Google, get the token,
+  // then forward it back to the Expo Go app via returnUrl
+  const startUrl = `${PROXY_BASE}/start?${new URLSearchParams({
+    authUrl: googleAuthUrl,
+    returnUrl,
+  }).toString()}`;
+
+  const result = await WebBrowser.openAuthSessionAsync(startUrl, returnUrl);
+
+  if (result.type !== 'success' || !result.url) {
     throw new Error('Google sign-in cancelado o fallido');
   }
 
-  // Exchange authorization code for tokens (PKCE — no client_secret needed)
-  const tokenResponse = await AuthSession.exchangeCodeAsync(
-    {
-      clientId,
-      code: result.params.code,
-      redirectUri,
-      extraParams: { code_verifier: request.codeVerifier ?? '' },
-    },
-    { tokenEndpoint: GOOGLE_TOKEN_ENDPOINT },
-  );
+  // The proxy appends the token as query params to the returnUrl
+  const urlPart = result.url.includes('#') ? result.url.split('#')[1] : result.url.split('?')[1] ?? '';
+  const urlParams = new URLSearchParams(urlPart);
+  const accessToken = urlParams.get('access_token');
 
-  const profileRes = await fetchWithTimeout(
-    'https://www.googleapis.com/oauth2/v2/userinfo',
-    { headers: { Authorization: `Bearer ${tokenResponse.accessToken}` } },
-  );
-  if (!profileRes.ok) throw new Error('No se pudo obtener el perfil de Google');
+  if (!accessToken) {
+    throw new Error('No se recibió el token de acceso de Google');
+  }
+
+  const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
   const profile = await profileRes.json();
 
   return {
-    accessToken:  tokenResponse.accessToken,
-    refreshToken: tokenResponse.refreshToken ?? '',
-    expiresAt:    Date.now() + (tokenResponse.expiresIn ?? 3600) * 1000,
-    email:        profile.email,
-    displayName:  profile.name ?? profile.email,
-    avatarUrl:    profile.picture ?? null,
+    accessToken,
+    refreshToken: '',
+    expiresAt: Date.now() + 3600 * 1000,
+    email: profile.email,
+    displayName: profile.name ?? profile.email,
+    avatarUrl: profile.picture ?? null,
   };
 }
 
-export async function refreshGoogleToken(
-  refreshToken: string,
-): Promise<{ accessToken: string; expiresAt: number }> {
-  // Fall back to Web client ID if platform-specific ID is not configured
-  // (Web ID works in Expo Go; native IDs needed only for standalone builds)
+export async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken: string; expiresAt: number }> {
   const clientId =
-    (Platform.OS === 'ios'     && GOOGLE_CLIENT_ID_IOS)     ? GOOGLE_CLIENT_ID_IOS :
-    (Platform.OS === 'android' && GOOGLE_CLIENT_ID_ANDROID) ? GOOGLE_CLIENT_ID_ANDROID :
-                                                               GOOGLE_CLIENT_ID_WEB;
+    Platform.OS === 'ios'
+      ? GOOGLE_CLIENT_ID_IOS
+      : Platform.OS === 'android'
+      ? GOOGLE_CLIENT_ID_ANDROID
+      : GOOGLE_CLIENT_ID_WEB;
 
-  const response = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -130,8 +114,9 @@ export async function refreshGoogleToken(
 // ─── Microsoft / Outlook ─────────────────────────────────────────────────────
 
 const MICROSOFT_CLIENT_ID = process.env.EXPO_PUBLIC_MICROSOFT_CLIENT_ID ?? '';
-const MICROSOFT_TENANT    = 'common';
-const MICROSOFT_SCOPES    = ['Mail.Read', 'User.Read', 'offline_access'];
+const MICROSOFT_TENANT = 'common';
+
+const MICROSOFT_SCOPES = ['Mail.Read', 'User.Read', 'offline_access'];
 
 export async function signInWithMicrosoft(): Promise<OAuthResult> {
   const redirectUri = AuthSession.makeRedirectUri({ scheme: 'inboxdocs' });
@@ -145,67 +130,63 @@ export async function signInWithMicrosoft(): Promise<OAuthResult> {
   });
 
   const authEndpoint = `https://login.microsoftonline.com/${MICROSOFT_TENANT}/oauth2/v2.0/authorize`;
+
   await request.makeAuthUrlAsync({ authorizationEndpoint: authEndpoint });
+
   const result = await request.promptAsync({ authorizationEndpoint: authEndpoint });
 
   if (result.type !== 'success') {
-    throw new Error('Microsoft sign-in cancelado o fallido');
+    throw new Error('Microsoft sign-in cancelled or failed');
   }
 
   const tokenEndpoint = `https://login.microsoftonline.com/${MICROSOFT_TENANT}/oauth2/v2.0/token`;
+
   const tokenResponse = await AuthSession.exchangeCodeAsync(
     {
       clientId: MICROSOFT_CLIENT_ID,
       code: result.params.code,
       redirectUri,
-      extraParams: { code_verifier: request.codeVerifier ?? '' },
+      extraParams: {
+        code_verifier: request.codeVerifier ?? '',
+      },
     },
-    { tokenEndpoint },
+    { tokenEndpoint }
   );
 
-  const profileRes = await fetchWithTimeout(
-    'https://graph.microsoft.com/v1.0/me',
-    { headers: { Authorization: `Bearer ${tokenResponse.accessToken}` } },
-  );
-  if (!profileRes.ok) throw new Error('No se pudo obtener el perfil de Microsoft');
+  // Fetch user profile from Graph API
+  const profileRes = await fetch('https://graph.microsoft.com/v1.0/me', {
+    headers: { Authorization: `Bearer ${tokenResponse.accessToken}` },
+  });
   const profile = await profileRes.json();
 
-  // Fetch avatar as base64 — URL.createObjectURL does not exist in React Native
+  // Try to get photo
   let avatarUrl: string | null = null;
   try {
-    const photoRes = await fetchWithTimeout(
-      'https://graph.microsoft.com/v1.0/me/photo/$value',
-      { headers: { Authorization: `Bearer ${tokenResponse.accessToken}` } },
-      8_000,
-    );
+    const photoRes = await fetch('https://graph.microsoft.com/v1.0/me/photo/$value', {
+      headers: { Authorization: `Bearer ${tokenResponse.accessToken}` },
+    });
     if (photoRes.ok) {
-      const buffer = await photoRes.arrayBuffer();
-      const bytes  = new Uint8Array(buffer);
-      let binary   = '';
-      bytes.forEach((b) => { binary += String.fromCharCode(b); });
-      const contentType = photoRes.headers.get('content-type') ?? 'image/jpeg';
-      avatarUrl = `data:${contentType};base64,${btoa(binary)}`;
+      const blob = await photoRes.blob();
+      avatarUrl = URL.createObjectURL(blob);
     }
   } catch {
-    // Profile photo is non-critical — continue without it
+    // No photo available
   }
 
   return {
-    accessToken:  tokenResponse.accessToken,
+    accessToken: tokenResponse.accessToken,
     refreshToken: tokenResponse.refreshToken ?? '',
-    expiresAt:    Date.now() + (tokenResponse.expiresIn ?? 3600) * 1000,
-    email:        profile.mail ?? profile.userPrincipalName,
-    displayName:  profile.displayName ?? profile.mail,
+    expiresAt: Date.now() + (tokenResponse.expiresIn ?? 3600) * 1000,
+    email: profile.mail ?? profile.userPrincipalName,
+    displayName: profile.displayName ?? profile.mail,
     avatarUrl,
   };
 }
 
-export async function refreshMicrosoftToken(
-  refreshToken: string,
-): Promise<{ accessToken: string; expiresAt: number }> {
+export async function refreshMicrosoftToken(refreshToken: string): Promise<{ accessToken: string; expiresAt: number }> {
   const tokenEndpoint = `https://login.microsoftonline.com/${MICROSOFT_TENANT}/oauth2/v2.0/token`;
 
-  const response = await fetchWithTimeout(tokenEndpoint, {
+  const response = await fetch(tokenEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -221,6 +202,20 @@ export async function refreshMicrosoftToken(
 
   return {
     accessToken: data.access_token,
-    expiresAt:   Date.now() + data.expires_in * 1000,
+    expiresAt: Date.now() + data.expires_in * 1000,
   };
+}
+
+// ─── Secure Storage ───────────────────────────────────────────────────────────
+
+export async function storeToken(key: string, value: string): Promise<void> {
+  await SecureStore.setItemAsync(key, value);
+}
+
+export async function getStoredToken(key: string): Promise<string | null> {
+  return await SecureStore.getItemAsync(key);
+}
+
+export async function deleteStoredToken(key: string): Promise<void> {
+  await SecureStore.deleteItemAsync(key);
 }
