@@ -187,7 +187,7 @@ export function parseSunatXml(xml: string): ParseResult {
       );
       const lineExt = parseFloat2(extractTag(lineXml, 'LineExtensionAmount') || '0');
       const lineTax = parseFloat2(extractTag(lineXml, 'TaxAmount') || '0');
-      const unitPrice = quantity > 0 ? parseFloat2(lineExt / quantity) : 0;
+      const unitPrice = quantity > 0 ? parseFloat2(String(lineExt / quantity)) : 0;
 
       return {
         description,

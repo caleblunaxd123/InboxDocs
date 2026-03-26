@@ -119,7 +119,7 @@ export const SyncProgressOverlay: React.FC<Props> = ({
                 onPress={handleCancelPress}
                 activeOpacity={0.8}
               >
-                <MaterialCommunityIcons name="stop-circle-outline" size={18} color={Colors.error ?? '#EF4444'} />
+                <MaterialCommunityIcons name="stop-circle-outline" size={18} color={Colors.danger} />
                 <Text style={styles.cancelText}>Cancelar sincronización</Text>
               </TouchableOpacity>
             </Animated.View>

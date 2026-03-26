@@ -310,7 +310,7 @@ function styles(theme: any) {
     },
     headerTitle: {
       flex: 1,
-      ...Typography.h3,
+      ...Typography.headingS,
       color: theme.textPrimary,
     },
     shareBtn: {
@@ -322,16 +322,16 @@ function styles(theme: any) {
     },
     card: {
       backgroundColor: theme.surface,
-      borderRadius: BorderRadius.lg,
+      borderRadius: BorderRadius.card,
       padding: Spacing.md,
-      ...Shadows.sm,
+      ...Shadows.subtle,
       gap: Spacing.xs,
     },
     typeBadge: {
       flexDirection: 'row',
       alignItems: 'center',
       alignSelf: 'flex-start',
-      borderRadius: BorderRadius.sm,
+      borderRadius: BorderRadius.input,
       paddingHorizontal: Spacing.sm,
       paddingVertical: 4,
       gap: 4,
@@ -342,7 +342,7 @@ function styles(theme: any) {
       fontWeight: '600',
     },
     invoiceNumber: {
-      ...Typography.h2,
+      ...Typography.headingM,
       color: theme.textPrimary,
     },
     issueDate: {
@@ -439,6 +439,6 @@ function styles(theme: any) {
       color: theme.textMuted,
       textAlign: 'center',
     },
-    warning: '#F59E0B',
+    warning: { color: '#F59E0B' },
   });
 }

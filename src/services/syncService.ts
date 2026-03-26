@@ -53,7 +53,7 @@ export function cancelSync(accountId: string): void {
  * Si el token está por expirar o ya expiró, lo refresca automáticamente.
  * Retorna la cuenta con el token actualizado, o lanza SESSION_EXPIRED si no se puede.
  */
-async function ensureFreshToken(account: Account): Promise<Account> {
+export async function ensureFreshToken(account: Account): Promise<Account> {
   const expiresAt = account.tokenExpiresAt ?? 0;
   if (expiresAt > Date.now() + REFRESH_MARGIN_MS) {
     return account; // Token válido con margen suficiente
@@ -98,24 +98,6 @@ async function ensureDir() {
   if (!info.exists) {
     await FileSystem.makeDirectoryAsync(ATTACHMENT_DIR, { intermediates: true });
   }
-}
-
-/**
- * Ensures the account token is still valid; refreshes it if expired.
- * Returns the (possibly updated) account object.
- */
-export async function ensureFreshToken(account: Account): Promise<Account> {
-  if (account.tokenExpiresAt && account.tokenExpiresAt > Date.now() + 60_000) {
-    return account; // still valid (with 1-min buffer)
-  }
-
-  const { refreshGoogleToken, refreshMicrosoftToken } = await import('./authService');
-  const refreshFn = account.provider === 'gmail' ? refreshGoogleToken : refreshMicrosoftToken;
-  const { accessToken, expiresAt } = await refreshFn(account.refreshTokenEncrypted);
-
-  await updateAccountTokens(account.id, accessToken, account.refreshTokenEncrypted, expiresAt);
-
-  return { ...account, accessTokenEncrypted: accessToken, tokenExpiresAt: expiresAt };
 }
 
 /**
@@ -320,22 +302,16 @@ export async function syncGmailAccount(
             isStarred: false,
             notes: null,
           };
-          const inserted = await insertDocument(docRecord);
+          await insertDocument(docRecord);
 
-          if (!inserted) {
-            // Race condition: otro sync paralelo ya insertó este adjunto.
-            // Eliminar el archivo descargado para no dejar huérfanos en disco.
-            FileSystem.deleteAsync(filePath, { idempotent: true }).catch(() => {});
-          } else {
-            // Extract SUNAT invoice data for XML attachments
-            if (ext === 'xml') {
-              extractAndPersistInvoice(docRecord).catch((e) =>
-                console.warn('[Sync] Invoice extraction failed:', e)
-              );
-            }
-            progress.documentsDownloaded++;
-            downloaded++;
+          // Extract SUNAT invoice data for XML attachments
+          if (ext === 'xml') {
+            extractAndPersistInvoice(docRecord).catch((e: any) =>
+              console.warn('[Sync] Invoice extraction failed:', e)
+            );
           }
+          progress.documentsDownloaded++;
+          downloaded++;
         } catch (err) {
           console.warn(`[Sync] Failed to download Gmail attachment ${filename}:`, err);
         }
@@ -532,22 +508,16 @@ export async function syncOutlookAccount(
             isStarred: false,
             notes: null,
           };
-          const inserted = await insertDocument(docRecord);
+          await insertDocument(docRecord);
 
-          if (!inserted) {
-            // Race condition: otro sync paralelo ya insertó este adjunto.
-            // Eliminar el archivo descargado para no dejar huérfanos en disco.
-            FileSystem.deleteAsync(filePath, { idempotent: true }).catch(() => {});
-          } else {
-            // Extract SUNAT invoice data for XML attachments
-            if (ext === 'xml') {
-              extractAndPersistInvoice(docRecord).catch((e) =>
-                console.warn('[Sync] Invoice extraction failed:', e)
-              );
-            }
-            progress.documentsDownloaded++;
-            downloaded++;
+          // Extract SUNAT invoice data for XML attachments
+          if (ext === 'xml') {
+            extractAndPersistInvoice(docRecord).catch((e: any) =>
+              console.warn('[Sync] Invoice extraction failed:', e)
+            );
           }
+          progress.documentsDownloaded++;
+          downloaded++;
         } catch (err) {
           console.warn(`[Sync] Failed to download Outlook attachment ${filename}:`, err);
         }

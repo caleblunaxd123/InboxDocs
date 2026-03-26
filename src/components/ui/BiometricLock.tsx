@@ -69,7 +69,7 @@ export function BiometricLock({ visible, onAuthenticated }: Props) {
         onAuthenticated();
       } else if (result.error === 'user_cancel') {
         setError('Toca el botón para intentar de nuevo');
-      } else if (result.error === 'lockout' || result.error === 'lockout_permanent') {
+      } else if (result.error === 'lockout' || (result.error as string) === 'lockout_permanent') {
         setError('Demasiados intentos. Usa la contraseña del dispositivo.');
       } else {
         setError('No se pudo verificar. Inténtalo de nuevo.');

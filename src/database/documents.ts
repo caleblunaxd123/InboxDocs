@@ -166,11 +166,17 @@ export async function getFilteredDocuments(filters: DocumentFilters): Promise<Do
 export async function getFilteredDocumentsPage(
   filters: DocumentFilters,
   offset: number,
-  limit: number
+  limit: number,
+  accountId?: string,
 ): Promise<Document[]> {
   const db = await getDatabase();
   const conditions: string[] = [];
   const params: any[] = [];
+
+  if (accountId) {
+    conditions.push('d.account_id = ?');
+    params.push(accountId);
+  }
 
   if (filters.category !== 'all') {
     conditions.push('d.category = ?');
@@ -238,7 +244,11 @@ export async function getFilteredDocumentsPage(
  * Returns ALL documents matching the given filters — no pagination limit.
  * Use for CSV export so the full dataset is always exported.
  */
-export async function getAllFilteredDocuments(filters: DocumentFilters): Promise<Document[]> {
+export async function getAllFilteredDocuments(filters: DocumentFilters, accountId?: string): Promise<Document[]> {
+  // Use paginated version with large limit to support accountId filter
+  if (accountId) {
+    return getFilteredDocumentsPage(filters, 0, 100000, accountId);
+  }
   return getFilteredDocuments(filters);
 }
 

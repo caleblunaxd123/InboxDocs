@@ -167,7 +167,7 @@ export default function AppNavigator() {
           </RootStack.Navigator>
         ) : (
           <AuthStack.Navigator
-            screenOptions={{ headerShown: false, animationEnabled: true }}
+            screenOptions={{ headerShown: false, animation: 'default' }}
             initialRouteName={hasSeenWalkthrough ? 'Onboarding' : 'Walkthrough'}
           >
             <AuthStack.Screen

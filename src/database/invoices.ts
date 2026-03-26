@@ -35,3 +35,7 @@ export async function getInvoiceMonthlySummary(_months?: number): Promise<Invoic
 export async function getTopIssuers(_limit?: number): Promise<InvoiceIssuerSummary[]> {
   return [];
 }
+
+export async function getSunatInvoiceByDocumentId(_documentId: string): Promise<any | null> {
+  return null;
+}
