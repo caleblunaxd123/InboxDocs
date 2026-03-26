@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, ViewStyle } from 'react-native';
-import { Colors, BorderRadius, Shadows, Spacing } from '../../utils/theme';
+import { BorderRadius, Shadows, Spacing } from '../../utils/theme';
+import { useTheme } from '../../utils/useTheme';
 
 interface CardProps {
   children: React.ReactNode;
@@ -8,18 +9,19 @@ interface CardProps {
   padding?: number;
 }
 
-export const Card: React.FC<CardProps> = ({ children, style, padding = Spacing.base }) => (
-  <View style={[styles.card, { padding }, style]}>
-    {children}
-  </View>
-);
+export const Card: React.FC<CardProps> = ({ children, style, padding = Spacing.base }) => {
+  const theme = useTheme();
+  return (
+    <View style={[styles.card, { padding, backgroundColor: theme.surface, borderColor: theme.border }, style]}>
+      {children}
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: Colors.surface,
     borderRadius: BorderRadius.card,
     borderWidth: 1,
-    borderColor: Colors.border,
     ...Shadows.subtle,
   },
 });

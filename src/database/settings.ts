@@ -55,7 +55,12 @@ export async function getAllSettings(): Promise<AppSettings> {
     sync_frequency: (map.sync_frequency as any) ?? 'daily',
     sync_on_open: map.sync_on_open === 'true',
     notify_on_new_docs: map.notify_on_new_docs === 'true',
-    allowed_extensions: map.allowed_extensions ? JSON.parse(map.allowed_extensions) : ['pdf'],
+    allowed_extensions: map.allowed_extensions ? JSON.parse(map.allowed_extensions) : [
+      'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+      'jpg', 'jpeg', 'png', 'heic', 'webp', 'gif',
+      'txt', 'csv', 'xml', 'json',
+      'zip', 'rar',
+    ],
     openai_api_key: openaiKey,
     default_sync_from_days: parseInt(map.default_sync_from_days ?? '30'),
     theme: (map.theme as any) ?? 'system',

@@ -1,4 +1,5 @@
 import React, { useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -13,6 +14,7 @@ import {
   Modal,
 } from 'react-native';
 import { Account, Document } from '../types';
+import { SyncProgress } from '../services/syncService';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -29,7 +31,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { updateAccountTokens } from '../database/accounts';
 import { getRecentDocuments, getDocumentStats, getStarredDocuments } from '../database/documents';
 import { signInWithGoogle, signInWithMicrosoft } from '../services/authService';
-import { syncGmailAccount, syncOutlookAccount } from '../services/syncService';
+import { syncGmailAccount, syncOutlookAccount, cancelSync } from '../services/syncService';
 import { scheduleNewDocumentsNotification } from '../services/notificationService';
 import { formatBytes } from '../utils/format';
 import { getFileTypeUI } from '../utils/fileTypes';
@@ -40,6 +42,8 @@ export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const {
     accounts,
+    activeAccountId,
+    setActiveAccountId,
     recentDocuments,
     starredDocuments,
     totalDocuments,
@@ -51,7 +55,6 @@ export default function HomeScreen() {
     setStats,
     settings,
     updateAccount,
-    updateSetting,
   } = useAppStore();
 
   const [refreshing, setRefreshing] = React.useState(false);
@@ -69,22 +72,25 @@ export default function HomeScreen() {
   });
 
   const loadData = useCallback(async () => {
+    const acctId = useAppStore.getState().activeAccountId ?? undefined;
     const [recent, starred, stats] = await Promise.all([
-      getRecentDocuments(10),
-      getStarredDocuments(20),
-      getDocumentStats(),
+      getRecentDocuments(10, acctId),
+      getStarredDocuments(20, acctId),
+      getDocumentStats(acctId),
     ]);
     setRecentDocuments(recent);
     setStarredDocuments(starred);
     setStats(stats.total, stats.totalSize);
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
 
   const handleSyncAccount = useCallback(
-    async (accountId: string, accountOverride?: Account) => {
+    async (accountId: string, accountOverride?: Account, syncToDateOverride?: Date, allowedExtensionsOverride?: string[]) => {
       // Guard: prevent double sync
       if (useAppStore.getState().syncState[accountId]?.isSyncing) return;
 
@@ -97,35 +103,45 @@ export default function HomeScreen() {
         progress: 'Iniciando sincronización...',
         emailsScanned: 0,
         documentsFound: 0,
+        documentsDownloaded: 0,
       });
+
+      let lastProgress: SyncProgress | null = null;
 
       try {
         const syncFn = account.provider === 'gmail' ? syncGmailAccount : syncOutlookAccount;
         const downloaded = await syncFn(account, (p) => {
+          lastProgress = p;
           setSyncState(accountId, {
             progress: p.currentAction,
             emailsScanned: p.emailsScanned,
             documentsFound: p.documentsFound,
+            documentsDownloaded: p.documentsDownloaded,
           });
-        });
+        }, syncToDateOverride, allowedExtensionsOverride);
 
         setSyncState(accountId, { isSyncing: false, lastSyncAt: Date.now() });
         updateAccount(accountId, { lastSyncAt: Date.now() });
         await loadData();
 
-        Alert.alert(
-          'Sincronización completada',
-          downloaded > 0
-            ? `Se descargaron ${downloaded} documento(s) nuevo(s).`
-            : 'No se encontraron documentos nuevos.'
-        );
+        const skippedCount = (lastProgress as SyncProgress | null)?.skippedCount ?? 0;
+        let message = downloaded > 0
+          ? `Se descargaron ${downloaded} documento(s) nuevo(s).`
+          : 'No se encontraron documentos nuevos.';
+        if (skippedCount > 0) {
+          message += `\n${skippedCount} adjunto(s) omitido(s) por filtros.`;
+        }
+
+        Alert.alert('Sincronización completada', message);
 
         if (downloaded > 0) {
           await scheduleNewDocumentsNotification(downloaded);
         }
       } catch (err: any) {
         setSyncState(accountId, { isSyncing: false });
-        if (err.code === 'SESSION_EXPIRED') {
+        if (err.code === 'SYNC_CANCELLED') {
+          // El usuario canceló intencionalmente — sin alerta
+        } else if (err.code === 'SESSION_EXPIRED') {
           Alert.alert(
             'Sesión expirada',
             err.message,
@@ -141,6 +157,15 @@ export default function HomeScreen() {
     },
     [accounts, loadData]
   );
+
+  // Cancela todos los syncs en curso
+  const handleCancelSync = useCallback(() => {
+    accounts.forEach((a) => {
+      if (syncState[a.id]?.isSyncing) {
+        cancelSync(a.id);
+      }
+    });
+  }, [accounts, syncState]);
 
   const handleReconnectAccount = useCallback(async (accountId: string) => {
     const account = accounts.find((a) => a.id === accountId);
@@ -182,30 +207,27 @@ export default function HomeScreen() {
     if (!acc) return;
 
     const newFromDate = format(syncFromDate, 'yyyy-MM-dd');
-    // Build allowed extensions from syncFileTypes
+    // Build allowed extensions from syncFileTypes — temporary, per-sync only (NOT saved globally)
     const extMap: Record<string, string[]> = {
       pdf: ['pdf'],
       images: ['jpg', 'jpeg', 'png', 'heic', 'webp'],
-      word: ['docx'],
-      excel: ['xlsx'],
-      xml: ['xml', 'txt'],
+      word: ['doc', 'docx'],
+      excel: ['xls', 'xlsx'],
+      xml: ['xml', 'txt', 'csv'],
     };
     const allowedExts = Object.entries(syncFileTypes)
       .filter(([, enabled]) => enabled)
       .flatMap(([key]) => extMap[key] ?? []);
 
-    // Persist the updated extension list and sync-from date
-    const { setSetting } = await import('../database/settings');
-    await setSetting('allowed_extensions', JSON.stringify(allowedExts));
-    if (settings) updateSetting('allowed_extensions', allowedExts as any);
-
+    // Update the sync-from date for this account
     const { upsertAccount } = await import('../database/accounts');
     const freshAccount = { ...acc, syncFromDate: newFromDate, lastSyncAt: null };
     updateAccount(accountId, { syncFromDate: newFromDate, lastSyncAt: null });
     await upsertAccount(freshAccount);
 
-    await handleSyncAccount(accountId, freshAccount);
-  }, [accounts, syncFromDate, syncFileTypes, handleSyncAccount, updateAccount, settings]);
+    // Pass syncToDate and extensions as temporary params — global settings stay unchanged
+    await handleSyncAccount(accountId, freshAccount, syncToDate, allowedExts);
+  }, [accounts, syncFromDate, syncToDate, syncFileTypes, handleSyncAccount, updateAccount]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -223,6 +245,8 @@ export default function HomeScreen() {
         progress={syncingAccountState?.progress ?? ''}
         emailsScanned={syncingAccountState?.emailsScanned ?? 0}
         documentsFound={syncingAccountState?.documentsFound ?? 0}
+        documentsDownloaded={syncingAccountState?.documentsDownloaded ?? 0}
+        onCancel={handleCancelSync}
       />
       <ScrollView
         style={styles.container}
@@ -499,41 +523,29 @@ export default function HomeScreen() {
 
       </Modal>
 
-      {/* DateTimePicker for FROM date - outside syncRangeModal to avoid nested modal issue on Android */}
+      {/* Date picker — DESDE */}
       {showFromPicker && (
         <Modal transparent animationType="fade" onRequestClose={() => setShowFromPicker(false)}>
           <View style={styles.datePickerOverlay}>
             <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
               <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha desde</Text>
-              {/* Date display */}
-              <View style={styles.datePickerManual}>
-                {['Año', 'Mes', 'Día'].map((label, idx) => {
-                  const parts = [syncFromDate.getFullYear(), syncFromDate.getMonth() + 1, syncFromDate.getDate()];
-                  return (
-                    <View key={label} style={styles.datePartCol}>
-                      <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{label}</Text>
-                      <Text style={[styles.datePartValue, { color: theme.textPrimary, borderColor: theme.border }]}>
-                        {String(parts[idx]).padStart(2, '0')}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-              {/* Quick buttons */}
+              <DateSpinner date={syncFromDate} onChange={setSyncFromDate} />
+              {/* Presets rápidos */}
+              <Text style={[styles.syncSectionLabel, { color: theme.textSecondary, marginTop: 4 }]}>ATAJOS RÁPIDOS</Text>
               <View style={styles.datePickerPresets}>
                 {[
-                  { label: 'Hace 1 semana', days: 7 },
-                  { label: 'Hace 30 días', days: 30 },
-                  { label: 'Hace 3 meses', days: 90 },
-                  { label: 'Hace 6 meses', days: 180 },
-                  { label: 'Hace 1 año', days: 365 },
+                  { label: 'Última semana', days: 7 },
+                  { label: 'Últimos 30 días', days: 30 },
+                  { label: 'Últimos 3 meses', days: 90 },
+                  { label: 'Últimos 6 meses', days: 180 },
+                  { label: 'Último año', days: 365 },
                 ].map(p => (
                   <TouchableOpacity
                     key={p.days}
-                    style={[styles.datePresetBtn, { borderColor: theme.border }]}
-                    onPress={() => { setSyncFromDate(subDays(new Date(), p.days)); setShowFromPicker(false); }}
+                    style={[styles.datePresetBtn, { borderColor: theme.border, backgroundColor: theme.primarySubtle }]}
+                    onPress={() => setSyncFromDate(subDays(new Date(), p.days))}
                   >
-                    <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
+                    <Text style={[styles.datePresetText, { color: theme.primary }]}>{p.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -541,18 +553,22 @@ export default function HomeScreen() {
                 style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
                 onPress={() => setShowFromPicker(false)}
               >
-                <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Confirmar</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
       )}
 
+      {/* Date picker — HASTA */}
       {showToPicker && (
         <Modal transparent animationType="fade" onRequestClose={() => setShowToPicker(false)}>
           <View style={styles.datePickerOverlay}>
             <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
               <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha hasta</Text>
+              <DateSpinner date={syncToDate} onChange={setSyncToDate} />
+              {/* Presets rápidos */}
+              <Text style={[styles.syncSectionLabel, { color: theme.textSecondary, marginTop: 4 }]}>ATAJOS RÁPIDOS</Text>
               <View style={styles.datePickerPresets}>
                 {[
                   { label: 'Hoy', days: 0 },
@@ -561,10 +577,10 @@ export default function HomeScreen() {
                 ].map(p => (
                   <TouchableOpacity
                     key={p.days}
-                    style={[styles.datePresetBtn, { borderColor: theme.border }]}
-                    onPress={() => { setSyncToDate(subDays(new Date(), p.days)); setShowToPicker(false); }}
+                    style={[styles.datePresetBtn, { borderColor: theme.border, backgroundColor: theme.primarySubtle }]}
+                    onPress={() => setSyncToDate(subDays(new Date(), p.days))}
                   >
-                    <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
+                    <Text style={[styles.datePresetText, { color: theme.primary }]}>{p.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -572,7 +588,7 @@ export default function HomeScreen() {
                 style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
                 onPress={() => setShowToPicker(false)}
               >
-                <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Confirmar</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -652,6 +668,115 @@ function SyncIconButton({ isSyncing, onPress }: { isSyncing: boolean; onPress: (
     </TouchableOpacity>
   );
 }
+
+/**
+ * Spinner de fecha con botones ▲/▼ para cada campo (año, mes, día).
+ * No requiere dependencias externas y funciona igual en iOS y Android.
+ */
+function DateSpinner({ date, onChange }: { date: Date; onChange: (d: Date) => void }) {
+  const theme = useTheme();
+
+  const adjust = (field: 'year' | 'month' | 'day', delta: number) => {
+    const d = new Date(date);
+    if (field === 'year') {
+      d.setFullYear(d.getFullYear() + delta);
+    } else if (field === 'month') {
+      d.setMonth(d.getMonth() + delta);
+    } else {
+      d.setDate(d.getDate() + delta);
+    }
+    onChange(d);
+  };
+
+  const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+  return (
+    <View style={spinnerStyles.row}>
+      <SpinCol
+        label="AÑO"
+        value={String(date.getFullYear())}
+        onInc={() => adjust('year', 1)}
+        onDec={() => adjust('year', -1)}
+        theme={theme}
+      />
+      <View style={[spinnerStyles.divider, { backgroundColor: theme.border }]} />
+      <SpinCol
+        label="MES"
+        value={MONTHS[date.getMonth()]}
+        onInc={() => adjust('month', 1)}
+        onDec={() => adjust('month', -1)}
+        theme={theme}
+      />
+      <View style={[spinnerStyles.divider, { backgroundColor: theme.border }]} />
+      <SpinCol
+        label="DÍA"
+        value={String(date.getDate()).padStart(2, '0')}
+        onInc={() => adjust('day', 1)}
+        onDec={() => adjust('day', -1)}
+        theme={theme}
+      />
+    </View>
+  );
+}
+
+function SpinCol({
+  label, value, onInc, onDec, theme,
+}: {
+  label: string; value: string; onInc: () => void; onDec: () => void; theme: any;
+}) {
+  return (
+    <View style={spinnerStyles.col}>
+      <TouchableOpacity onPress={onInc} style={spinnerStyles.arrowBtn} hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}>
+        <MaterialCommunityIcons name="chevron-up" size={32} color={theme.primary} />
+      </TouchableOpacity>
+      <Text style={[spinnerStyles.value, { color: theme.textPrimary, borderColor: theme.primary + '50', backgroundColor: theme.primarySubtle }]}>
+        {value}
+      </Text>
+      <Text style={[spinnerStyles.fieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <TouchableOpacity onPress={onDec} style={spinnerStyles.arrowBtn} hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}>
+        <MaterialCommunityIcons name="chevron-down" size={32} color={theme.primary} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const spinnerStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 8,
+    gap: 0,
+  },
+  col: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+  },
+  divider: {
+    width: 1,
+    height: 80,
+    marginHorizontal: 4,
+  },
+  arrowBtn: {
+    padding: 2,
+  },
+  value: {
+    fontSize: 22,
+    fontWeight: '700',
+    minWidth: 58,
+    textAlign: 'center',
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  fieldLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+});
 
 function StatItem({ icon, label, value }: { icon: string; label: string; value: string }) {
   const theme = useTheme();

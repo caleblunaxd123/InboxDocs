@@ -18,6 +18,7 @@ import DocumentDetailScreen from '../screens/DocumentDetailScreen';
 import DocumentViewerScreen from '../screens/DocumentViewerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import InsightsScreen from '../screens/InsightsScreen';
+import InvoiceDetailScreen from '../screens/InvoiceDetailScreen';
 
 export type RootStackParams = {
   Main: undefined;
@@ -28,6 +29,7 @@ export type RootStackParams = {
     mimeType: string;
     fileExtension: string;
   };
+  InvoiceDetail: { documentId: string };
 };
 
 export type AuthStackParams = {
@@ -159,6 +161,11 @@ export default function AppNavigator() {
               name="DocumentViewer"
               component={DocumentViewerScreen}
               options={{ presentation: 'modal', gestureEnabled: true, headerShown: false }}
+            />
+            <RootStack.Screen
+              name="InvoiceDetail"
+              component={InvoiceDetailScreen}
+              options={{ presentation: 'card', gestureEnabled: true }}
             />
           </RootStack.Navigator>
         ) : (

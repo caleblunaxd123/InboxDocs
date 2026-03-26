@@ -22,6 +22,7 @@ function AppBootstrap() {
     setSettings,
     setHasSeenWalkthrough,
     setSyncState,
+    updateAccount,
     settings,
     accounts,
   } = useAppStore();
@@ -74,7 +75,11 @@ function AppBootstrap() {
             });
           })
             .then(async () => {
-              setSyncState(acc.id, { isSyncing: false, lastSyncAt: Date.now() });
+              const now = Date.now();
+              setSyncState(acc.id, { isSyncing: false, lastSyncAt: now });
+              // Actualizar lastSyncAt en el store de la cuenta para que el siguiente
+              // sync manual use la fecha correcta y no re-escanee emails ya procesados.
+              updateAccount(acc.id, { lastSyncAt: now });
               const [freshRecent, freshStats] = await Promise.all([
                 getRecentDocuments(10),
                 getDocumentStats(),

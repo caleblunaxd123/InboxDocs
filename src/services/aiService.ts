@@ -108,6 +108,9 @@ Categories (respond with the category ID only):
 
 Respond with a JSON object: {"category": "<category_id>", "confidence": <0.0-1.0>}`;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -121,7 +124,9 @@ Respond with a JSON object: {"category": "<category_id>", "confidence": <0.0-1.0
         temperature: 0,
         response_format: { type: 'json_object' },
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (!response.ok) throw new Error(`OpenAI error: ${response.status}`);
 

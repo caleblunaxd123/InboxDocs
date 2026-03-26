@@ -13,6 +13,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { PieChart, BarChart } from 'react-native-chart-kit';
 import { Colors, Spacing, Typography, BorderRadius, Shadows, CategoryLabels, CategoryColors } from '../utils/theme';
 import { useTheme } from '../utils/useTheme';
+import { useAppStore } from '../store/useAppStore';
 import { formatBytes } from '../utils/format';
 import {
   getDocumentsByCategory,
@@ -44,6 +45,7 @@ function SenderAvatar({ name, index }: { name: string; index: number }) {
 
 export default function InsightsScreen() {
   const theme = useTheme();
+  const { activeAccountId } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, totalSize: 0 });
   const [categoryData, setCategoryData] = useState<{ category: string; count: number; totalSize: number }[]>([]);
@@ -54,18 +56,19 @@ export default function InsightsScreen() {
   useFocusEffect(
     useCallback(() => {
       loadAll();
-    }, [])
+    }, [activeAccountId])
   );
 
   async function loadAll() {
     setLoading(true);
+    const acctId = activeAccountId ?? undefined;
     try {
       const [s, cats, months, senders, types] = await Promise.all([
-        getDocumentStats(),
-        getDocumentsByCategory(),
-        getDocumentsByMonth(6),
-        getTopSenders(8),
-        getDocumentsByFileType(),
+        getDocumentStats(acctId),
+        getDocumentsByCategory(acctId),
+        getDocumentsByMonth(6, acctId),
+        getTopSenders(8, acctId),
+        getDocumentsByFileType(acctId),
       ]);
       setStats(s);
       setCategoryData(cats);

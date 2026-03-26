@@ -130,6 +130,29 @@ export async function updateAccountLastSync(id: string, timestamp: number): Prom
 
 export async function deleteAccount(id: string): Promise<void> {
   const db = await getDatabase();
-  await db.runAsync('UPDATE accounts SET is_active = 0 WHERE id = ?', [id]);
+
+  // Eliminar archivos físicos de todos los documentos de esta cuenta
+  const rows = await db.getAllAsync(
+    'SELECT file_path FROM documents WHERE account_id = ?',
+    [id]
+  );
+  for (const row of rows as any[]) {
+    if (row.file_path) {
+      try {
+        const FileSystem = await import('expo-file-system/legacy');
+        await FileSystem.deleteAsync(row.file_path, { idempotent: true });
+      } catch {
+        // Si el archivo ya no existe, continuar sin error
+      }
+    }
+  }
+
+  // Eliminar registros de documentos de la cuenta
+  await db.runAsync('DELETE FROM documents WHERE account_id = ?', [id]);
+
+  // Hard delete de la cuenta (activa el CASCADE de sync_log)
+  await db.runAsync('DELETE FROM accounts WHERE id = ?', [id]);
+
+  // Borrar tokens de SecureStore
   await deleteAccountTokens(id);
 }

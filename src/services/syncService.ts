@@ -2,16 +2,92 @@ import axios from 'axios';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Account } from '../types';
 import { documentExists, insertDocument } from '../database/documents';
-import { updateAccountLastSync } from '../database/accounts';
+import { updateAccountLastSync, updateAccountTokens } from '../database/accounts';
 import { categorizeDocument } from './aiService';
+import { refreshGoogleToken, refreshMicrosoftToken } from './authService';
+import { extractAndPersistInvoice } from './invoiceService';
 import { getAllSettings } from '../database/settings';
 import { v4 as uuidv4 } from 'uuid';
 import { ATTACHMENT_DIR } from '../constants';
+
+/**
+ * Convierte un ArrayBuffer a string base64 en chunks de 8 KB.
+ * Evita el O(n) de concatenación de strings que congela el hilo JS
+ * con archivos grandes (problema original en la versión Outlook).
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 8192;
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as any);
+  }
+  return btoa(binary);
+}
+
+/** Margen de seguridad: refrescar si el token expira en menos de 5 minutos. */
+const REFRESH_MARGIN_MS = 5 * 60 * 1000;
+
+/**
+ * Per-account mutex: previene que dos syncs del mismo accountId corran en paralelo.
+ * Cubre el caso background-sync vs manual-sync simultáneos.
+ */
+const syncLocks = new Map<string, boolean>();
+
+/**
+ * Set de accountIds cuyo sync ha sido cancelado por el usuario.
+ * El loop de sync comprueba este set en cada email y lanza SYNC_CANCELLED.
+ */
+const cancelRequests = new Set<string>();
+
+/**
+ * Solicita la cancelación del sync en curso para la cuenta dada.
+ * El sync se detendrá antes del próximo email procesado.
+ */
+export function cancelSync(accountId: string): void {
+  cancelRequests.add(accountId);
+}
+
+/**
+ * Garantiza que la cuenta tiene un access token válido antes del sync.
+ * Si el token está por expirar o ya expiró, lo refresca automáticamente.
+ * Retorna la cuenta con el token actualizado, o lanza SESSION_EXPIRED si no se puede.
+ */
+async function ensureFreshToken(account: Account): Promise<Account> {
+  const expiresAt = account.tokenExpiresAt ?? 0;
+  if (expiresAt > Date.now() + REFRESH_MARGIN_MS) {
+    return account; // Token válido con margen suficiente
+  }
+
+  try {
+    if (account.provider === 'gmail') {
+      const { accessToken, expiresAt: newExp } = await refreshGoogleToken();
+      await updateAccountTokens(account.id, accessToken, account.refreshTokenEncrypted, newExp);
+      return { ...account, accessTokenEncrypted: accessToken, tokenExpiresAt: newExp };
+    } else {
+      const { accessToken, expiresAt: newExp } = await refreshMicrosoftToken(account.refreshTokenEncrypted);
+      await updateAccountTokens(account.id, accessToken, account.refreshTokenEncrypted, newExp);
+      return { ...account, accessTokenEncrypted: accessToken, tokenExpiresAt: newExp };
+    }
+  } catch {
+    const err: any = new Error('Sesión expirada. Reconecta tu cuenta para continuar.');
+    err.code = 'SESSION_EXPIRED';
+    err.accountId = account.id;
+    throw err;
+  }
+}
+
+export interface SkippedFile {
+  filename: string;
+  reason: string;
+}
 
 export interface SyncProgress {
   emailsScanned: number;
   documentsFound: number;
   documentsDownloaded: number;
+  skippedCount: number;
+  skippedFiles: SkippedFile[];
   currentAction: string;
 }
 
@@ -22,24 +98,6 @@ async function ensureDir() {
   if (!info.exists) {
     await FileSystem.makeDirectoryAsync(ATTACHMENT_DIR, { intermediates: true });
   }
-}
-
-function getMimeExtension(mimeType: string, fallback: string): string {
-  const map: Record<string, string> = {
-    'application/pdf': 'pdf',
-    'image/jpeg': 'jpg',
-    'image/jpg': 'jpg',
-    'image/png': 'png',
-    'image/heic': 'heic',
-    'image/webp': 'webp',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
-    'text/xml': 'xml',
-    'application/xml': 'xml',
-    'text/plain': 'txt',
-  };
-  return map[mimeType] ?? fallback;
 }
 
 /**
@@ -63,24 +121,33 @@ function collectParts(payload: any): any[] {
 export async function syncGmailAccount(
   account: Account,
   onProgress: SyncProgressCallback,
+  toDate?: Date,
+  allowedExtensions?: string[],
 ): Promise<number> {
-  // Early expiry check — avoids a pointless API call that would 401 anyway
-  if (account.tokenExpiresAt && account.tokenExpiresAt < Date.now()) {
-    const err: any = new Error('Sesión expirada. Reconecta tu cuenta para continuar.');
-    err.code = 'SESSION_EXPIRED';
-    err.accountId = account.id;
-    throw err;
+  // Lock: evita dos syncs simultáneos para la misma cuenta
+  if (syncLocks.get(account.id)) {
+    console.warn(`[Sync] Gmail sync ya en curso para ${account.email} — ignorando llamada duplicada`);
+    return 0;
   }
+  syncLocks.set(account.id, true);
+
+  try {
+  account = await ensureFreshToken(account);
 
   await ensureDir();
-  const settings     = await getAllSettings();
+  const settings = await getAllSettings();
+  // Max file size limit prevents very large attachments from consuming storage (default 25 MB)
   const maxSizeBytes = settings.max_file_size_mb * 1024 * 1024;
-  const allowed      = new Set(settings.allowed_extensions.map((e) => e.toLowerCase()));
+  // Use parameter override if provided, otherwise fall back to persisted settings
+  const extensionList = allowedExtensions ?? settings.allowed_extensions;
+  const allowed = new Set(extensionList.map((e) => e.toLowerCase()));
 
   const progress: SyncProgress = {
     emailsScanned: 0,
     documentsFound: 0,
     documentsDownloaded: 0,
+    skippedCount: 0,
+    skippedFiles: [],
     currentAction: 'Buscando correos con adjuntos...',
   };
 
@@ -106,7 +173,9 @@ export async function syncGmailAccount(
     ? new Date(account.lastSyncAt)
     : new Date(account.syncFromDate);
 
-  const afterQuery = `after:${Math.floor(sinceDate.getTime() / 1000)} has:attachment`;
+  const afterQuery = toDate
+    ? `after:${Math.floor(sinceDate.getTime() / 1000)} before:${Math.floor(toDate.getTime() / 1000)} has:attachment`
+    : `after:${Math.floor(sinceDate.getTime() / 1000)} has:attachment`;
 
   let pageToken: string | undefined;
   let downloaded = 0;
@@ -118,10 +187,18 @@ export async function syncGmailAccount(
     const messages: { id: string }[] = listRes.data.messages ?? [];
     pageToken = listRes.data.nextPageToken;
 
-    progress.emailsScanned += messages.length;
-
     for (const msg of messages) {
       if (progress.emailsScanned >= 200) break;
+
+      // Comprobar cancelación antes de cada email
+      if (cancelRequests.has(account.id)) {
+        cancelRequests.delete(account.id);
+        const err: any = new Error('Sincronización cancelada por el usuario.');
+        err.code = 'SYNC_CANCELLED';
+        throw err;
+      }
+
+      progress.emailsScanned += 1;
 
       await new Promise((r) => setTimeout(r, 100)); // respect rate limits
 
@@ -151,8 +228,24 @@ export async function syncGmailAccount(
         const mimeType: string = part.mimeType ?? '';
         const size: number     = part.body.size ?? 0;
 
-        if (!allowed.has(ext)) continue;
-        if (size > maxSizeBytes) continue;
+        if (!allowed.has(ext)) {
+          progress.skippedCount += 1;
+          progress.skippedFiles.push({
+            filename,
+            reason: `Tipo .${ext} no incluido en filtros`,
+          });
+          onProgress({ ...progress });
+          continue;
+        }
+        if (size > maxSizeBytes) {
+          progress.skippedCount += 1;
+          progress.skippedFiles.push({
+            filename,
+            reason: `Excede ${settings.max_file_size_mb} MB`,
+          });
+          onProgress({ ...progress });
+          continue;
+        }
 
         progress.currentAction = `Analizando: ${filename}`;
         onProgress({ ...progress });
@@ -183,7 +276,7 @@ export async function syncGmailAccount(
             settings,
           );
 
-          await insertDocument({
+          const docRecord = {
             id: docId,
             accountId: account.id,
             messageId: msg.id,
@@ -203,10 +296,23 @@ export async function syncGmailAccount(
             downloadedAt: Date.now(),
             isStarred: false,
             notes: null,
-          });
+          };
+          const inserted = await insertDocument(docRecord);
 
-          progress.documentsDownloaded++;
-          downloaded++;
+          if (!inserted) {
+            // Race condition: otro sync paralelo ya insertó este adjunto.
+            // Eliminar el archivo descargado para no dejar huérfanos en disco.
+            FileSystem.deleteAsync(filePath, { idempotent: true }).catch(() => {});
+          } else {
+            // Extract SUNAT invoice data for XML attachments
+            if (ext === 'xml') {
+              extractAndPersistInvoice(docRecord).catch((e) =>
+                console.warn('[Sync] Invoice extraction failed:', e)
+              );
+            }
+            progress.documentsDownloaded++;
+            downloaded++;
+          }
         } catch (err) {
           console.warn(`[Sync] Failed to download Gmail attachment ${filename}:`, err);
         }
@@ -216,6 +322,9 @@ export async function syncGmailAccount(
 
   await updateAccountLastSync(account.id, Date.now());
   return downloaded;
+  } finally {
+    syncLocks.delete(account.id);
+  }
 }
 
 // ─── Outlook / Microsoft Graph ────────────────────────────────────────────────
@@ -223,24 +332,33 @@ export async function syncGmailAccount(
 export async function syncOutlookAccount(
   account: Account,
   onProgress: SyncProgressCallback,
+  toDate?: Date,
+  allowedExtensions?: string[],
 ): Promise<number> {
-  // Early expiry check
-  if (account.tokenExpiresAt && account.tokenExpiresAt < Date.now()) {
-    const err: any = new Error('Sesión expirada. Reconecta tu cuenta para continuar.');
-    err.code = 'SESSION_EXPIRED';
-    err.accountId = account.id;
-    throw err;
+  // Lock: evita dos syncs simultáneos para la misma cuenta
+  if (syncLocks.get(account.id)) {
+    console.warn(`[Sync] Outlook sync ya en curso para ${account.email} — ignorando llamada duplicada`);
+    return 0;
   }
+  syncLocks.set(account.id, true);
+
+  try {
+  account = await ensureFreshToken(account);
 
   await ensureDir();
-  const settings     = await getAllSettings();
+  const settings = await getAllSettings();
+  // Max file size limit prevents very large attachments from consuming storage (default 25 MB)
   const maxSizeBytes = settings.max_file_size_mb * 1024 * 1024;
-  const allowed      = new Set(settings.allowed_extensions.map((e) => e.toLowerCase()));
+  // Use parameter override if provided, otherwise fall back to persisted settings
+  const extensionList = allowedExtensions ?? settings.allowed_extensions;
+  const allowed = new Set(extensionList.map((e) => e.toLowerCase()));
 
   const progress: SyncProgress = {
     emailsScanned: 0,
     documentsFound: 0,
     documentsDownloaded: 0,
+    skippedCount: 0,
+    skippedFiles: [],
     currentAction: 'Buscando correos con adjuntos...',
   };
 
@@ -267,17 +385,28 @@ export async function syncOutlookAccount(
     : new Date(account.syncFromDate);
 
   let downloaded = 0;
-  let url = `/me/messages?$filter=hasAttachments eq true and receivedDateTime ge ${sinceDate.toISOString()}&$select=id,subject,from,receivedDateTime&$top=50`;
+  const toDateFilter = toDate
+    ? ` and receivedDateTime le ${toDate.toISOString()}`
+    : '';
+  let url = `/me/messages?$filter=hasAttachments eq true and receivedDateTime ge ${sinceDate.toISOString()}${toDateFilter}&$select=id,subject,from,receivedDateTime&$top=50`;
 
   do {
     const res = await api.get(url);
     const messages: any[] = res.data.value ?? [];
     const nextLink: string | undefined = res.data['@odata.nextLink'];
 
-    progress.emailsScanned += messages.length;
-
     for (const msg of messages) {
       if (progress.emailsScanned >= 200) break;
+
+      // Comprobar cancelación antes de cada email
+      if (cancelRequests.has(account.id)) {
+        cancelRequests.delete(account.id);
+        const err: any = new Error('Sincronización cancelada por el usuario.');
+        err.code = 'SYNC_CANCELLED';
+        throw err;
+      }
+
+      progress.emailsScanned += 1;
 
       const subject     = msg.subject ?? '';
       const senderEmail = msg.from?.emailAddress?.address ?? '';
@@ -310,8 +439,24 @@ export async function syncOutlookAccount(
         const mimeType: string = att.contentType ?? '';
         const size: number     = att.size ?? 0;
 
-        if (!allowed.has(ext)) continue;
-        if (size > maxSizeBytes) continue;
+        if (!allowed.has(ext)) {
+          progress.skippedCount += 1;
+          progress.skippedFiles.push({
+            filename,
+            reason: `Tipo .${ext} no incluido en filtros`,
+          });
+          onProgress({ ...progress });
+          continue;
+        }
+        if (size > maxSizeBytes) {
+          progress.skippedCount += 1;
+          progress.skippedFiles.push({
+            filename,
+            reason: `Excede ${settings.max_file_size_mb} MB`,
+          });
+          onProgress({ ...progress });
+          continue;
+        }
 
         progress.currentAction = `Analizando: ${filename}`;
         onProgress({ ...progress });
@@ -329,7 +474,7 @@ export async function syncOutlookAccount(
             { responseType: 'arraybuffer' },
           );
 
-          const base64Data   = Buffer.from(contentRes.data).toString('base64');
+          const base64Data = arrayBufferToBase64(contentRes.data as ArrayBuffer);
           const safeFilename = `${uuidv4()}_${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
           const filePath     = `${ATTACHMENT_DIR}${safeFilename}`;
 
@@ -343,7 +488,7 @@ export async function syncOutlookAccount(
             settings,
           );
 
-          await insertDocument({
+          const docRecord = {
             id: docId,
             accountId: account.id,
             messageId: msg.id,
@@ -363,10 +508,23 @@ export async function syncOutlookAccount(
             downloadedAt: Date.now(),
             isStarred: false,
             notes: null,
-          });
+          };
+          const inserted = await insertDocument(docRecord);
 
-          progress.documentsDownloaded++;
-          downloaded++;
+          if (!inserted) {
+            // Race condition: otro sync paralelo ya insertó este adjunto.
+            // Eliminar el archivo descargado para no dejar huérfanos en disco.
+            FileSystem.deleteAsync(filePath, { idempotent: true }).catch(() => {});
+          } else {
+            // Extract SUNAT invoice data for XML attachments
+            if (ext === 'xml') {
+              extractAndPersistInvoice(docRecord).catch((e) =>
+                console.warn('[Sync] Invoice extraction failed:', e)
+              );
+            }
+            progress.documentsDownloaded++;
+            downloaded++;
+          }
         } catch (err) {
           console.warn(`[Sync] Failed to download Outlook attachment ${filename}:`, err);
         }
@@ -382,4 +540,7 @@ export async function syncOutlookAccount(
 
   await updateAccountLastSync(account.id, Date.now());
   return downloaded;
+  } finally {
+    syncLocks.delete(account.id);
+  }
 }

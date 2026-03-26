@@ -60,7 +60,7 @@ const FILE_TYPE_CHIPS = [
 export default function RepositoryScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
-  const { filters, setFilter, resetFilters, documents, setDocuments, removeDocument, syncState } = useAppStore();
+  const { filters, setFilter, resetFilters, documents, setDocuments, removeDocument, syncState, activeAccountId } = useAppStore();
   const insets = useSafeAreaInsets();
   const [searchFocused, setSearchFocused] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -125,7 +125,8 @@ export default function RepositoryScreen() {
 
   const loadDocuments = useCallback(async (reset = true) => {
     const offset = reset ? 0 : offsetRef.current;
-    const page = await getFilteredDocumentsPage(filters, offset, PAGE_SIZE);
+    const acctId = activeAccountId ?? undefined;
+    const page = await getFilteredDocumentsPage(filters, offset, PAGE_SIZE, acctId);
     if (reset) {
       setDocuments(page);
       offsetRef.current = page.length;
@@ -139,7 +140,7 @@ export default function RepositoryScreen() {
       checkFileAvailability(newItems);
     }
     setHasMore(page.length === PAGE_SIZE);
-  }, [filters, checkFileAvailability]);
+  }, [filters, activeAccountId, checkFileAvailability]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -166,7 +167,7 @@ export default function RepositoryScreen() {
       setSelectedIds(new Set());
       offsetRef.current = 0;
       loadDocuments(true);
-    }, [filters.category, filters.provider, filters.fileType, filters.dateRange, filters.starredOnly, filters.sortBy, filters.searchQuery])
+    }, [filters.category, filters.provider, filters.fileType, filters.dateRange, filters.starredOnly, filters.sortBy, filters.searchQuery, activeAccountId])
   );
 
   useEffect(() => {
@@ -251,7 +252,8 @@ export default function RepositoryScreen() {
   const handleExportAll = useCallback(async () => {
     setExportingCsv(true);
     try {
-      const allDocs = await getAllFilteredDocuments(filters);
+      const acctId = activeAccountId ?? undefined;
+      const allDocs = await getAllFilteredDocuments(filters, acctId);
       if (allDocs.length === 0) {
         Alert.alert('Sin documentos', 'No hay documentos que exportar con los filtros actuales.');
         return;
@@ -262,7 +264,7 @@ export default function RepositoryScreen() {
     } finally {
       setExportingCsv(false);
     }
-  }, [filters]);
+  }, [filters, activeAccountId]);
 
   const renderItem = useCallback(({ item }: { item: Document }) => (
     <DocumentListItem

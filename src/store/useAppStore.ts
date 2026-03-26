@@ -7,6 +7,7 @@ interface SyncStateEntry {
   lastSyncAt: number | null;
   emailsScanned: number;
   documentsFound: number;
+  documentsDownloaded: number;
 }
 
 interface SyncState {
@@ -24,6 +25,11 @@ interface AppStore {
   updateAccount: (id: string, updates: Partial<Account>) => void;
   setInitialized: (value: boolean) => void;
   setHasSeenWalkthrough: (value: boolean) => void;
+
+  // Active account filter (null = show all accounts)
+  activeAccountId: string | null;
+  setActiveAccountId: (id: string | null) => void;
+  getActiveAccount: () => Account | null;
 
   // Documents
   documents: Document[];
@@ -66,7 +72,7 @@ const defaultFilters: DocumentFilters = {
   sortBy: 'date_desc',
 };
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   // Auth
   accounts: [],
   isInitialized: false,
@@ -80,6 +86,15 @@ export const useAppStore = create<AppStore>((set) => ({
     })),
   setInitialized: (value) => set({ isInitialized: value }),
   setHasSeenWalkthrough: (value) => set({ hasSeenWalkthrough: value }),
+
+  // Active account filter
+  activeAccountId: null,
+  setActiveAccountId: (id) => set({ activeAccountId: id }),
+  getActiveAccount: () => {
+    const state = get();
+    if (!state.activeAccountId) return null;
+    return state.accounts.find((a) => a.id === state.activeAccountId) ?? null;
+  },
 
   // Documents
   documents: [],
@@ -114,11 +129,31 @@ export const useAppStore = create<AppStore>((set) => ({
     }),
   upsertDocument: (doc) =>
     set((s) => {
-      const exists = s.documents.some((d) => d.id === doc.id);
+      const existsInDocs = s.documents.some((d) => d.id === doc.id);
+      const existsInRecent = s.recentDocuments.some((d) => d.id === doc.id);
+      const existsInStarred = s.starredDocuments.some((d) => d.id === doc.id);
+
+      const newDocuments = existsInDocs
+        ? s.documents.map((d) => (d.id === doc.id ? doc : d))
+        : [doc, ...s.documents];
+
+      // Prepend to recent if new, update if existing
+      let newRecent = existsInRecent
+        ? s.recentDocuments.map((d) => (d.id === doc.id ? doc : d))
+        : [doc, ...s.recentDocuments].slice(0, 20);
+
+      // Update starred: add if starred, remove if not, update if existing
+      let newStarred = existsInStarred
+        ? s.starredDocuments.map((d) => (d.id === doc.id ? doc : d)).filter((d) => d.isStarred)
+        : doc.isStarred ? [doc, ...s.starredDocuments] : s.starredDocuments;
+
       return {
-        documents: exists
-          ? s.documents.map((d) => (d.id === doc.id ? doc : d))
-          : [doc, ...s.documents],
+        documents: newDocuments,
+        recentDocuments: newRecent,
+        starredDocuments: newStarred,
+        // Increment stats only for genuinely new documents
+        totalDocuments: existsInDocs ? s.totalDocuments : s.totalDocuments + 1,
+        totalSizeBytes: existsInDocs ? s.totalSizeBytes : s.totalSizeBytes + doc.fileSize,
       };
     }),
 

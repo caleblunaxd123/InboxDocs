@@ -8,7 +8,9 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
 import { getAllAccounts } from '../database/accounts';
+import { getRecentDocuments, getDocumentStats } from '../database/documents';
 import { syncGmailAccount, syncOutlookAccount } from './syncService';
+import { useAppStore } from '../store/useAppStore';
 
 export const BACKGROUND_SYNC_TASK = 'INBOXDOCS_BACKGROUND_SYNC';
 
@@ -32,6 +34,19 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
 
     for (const r of results) {
       if (r.status === 'fulfilled') totalNew += r.value ?? 0;
+    }
+
+    // Refresh the in-memory store so the UI updates when the user opens the app
+    try {
+      const [freshRecent, freshStats] = await Promise.all([
+        getRecentDocuments(10),
+        getDocumentStats(),
+      ]);
+      const store = useAppStore.getState();
+      store.setRecentDocuments(freshRecent);
+      store.setStats(freshStats.total, freshStats.totalSize);
+    } catch {
+      // Store refresh is best-effort — app will reload on next open anyway
     }
 
     if (totalNew > 0) {

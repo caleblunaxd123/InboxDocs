@@ -7,7 +7,8 @@ import {
   Text,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, BorderRadius, Spacing, Typography } from '../../utils/theme';
+import { BorderRadius, Spacing, Typography } from '../../utils/theme';
+import { useTheme } from '../../utils/useTheme';
 
 interface SearchBarProps {
   value: string;
@@ -26,32 +27,39 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   focused,
   placeholder = 'Buscar documentos...',
 }) => {
+  const theme = useTheme();
   const inputRef = useRef<TextInput>(null);
 
   return (
     <View style={styles.container}>
-      <View style={[styles.inputContainer, focused && styles.inputFocused]}>
-        <Ionicons name="search" size={18} color={Colors.textMuted} />
+      <View
+        style={[
+          styles.inputContainer,
+          { backgroundColor: theme.surface, borderColor: theme.border },
+          focused && { borderColor: theme.primaryLight, borderWidth: 1.5 },
+        ]}
+      >
+        <Ionicons name="search" size={18} color={theme.textMuted} />
         <TextInput
           ref={inputRef}
-          style={styles.input}
+          style={[styles.input, { color: theme.textPrimary }]}
           value={value}
           onChangeText={onChangeText}
           onFocus={onFocus}
           placeholder={placeholder}
-          placeholderTextColor={Colors.textMuted}
+          placeholderTextColor={theme.textMuted}
           returnKeyType="search"
           clearButtonMode="while-editing"
         />
         {value.length > 0 && (
           <TouchableOpacity onPress={() => onChangeText('')}>
-            <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
+            <Ionicons name="close-circle" size={18} color={theme.textMuted} />
           </TouchableOpacity>
         )}
       </View>
       {focused && onCancel && (
         <TouchableOpacity onPress={onCancel} style={styles.cancelBtn}>
-          <Text style={styles.cancelText}>Cancelar</Text>
+          <Text style={[styles.cancelText, { color: theme.primary }]}>Cancelar</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -68,22 +76,15 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
     borderRadius: BorderRadius.input,
     borderWidth: 1,
-    borderColor: Colors.border,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm + 2,
     gap: Spacing.sm,
   },
-  inputFocused: {
-    borderColor: Colors.primaryLight,
-    borderWidth: 1.5,
-  },
   input: {
     flex: 1,
     ...Typography.bodyM,
-    color: Colors.textPrimary,
     padding: 0,
   },
   cancelBtn: {
@@ -91,7 +92,6 @@ const styles = StyleSheet.create({
   },
   cancelText: {
     ...Typography.bodyM,
-    color: Colors.primary,
     fontWeight: '500',
   },
 });

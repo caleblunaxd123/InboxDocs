@@ -175,7 +175,7 @@ function SyncFrequencyRow({
 
 export default function SettingsScreen() {
   const theme = useTheme();
-  const { accounts, removeAccount, updateAccount, settings, setSettings, updateSetting, addAccount, setDocuments, setRecentDocuments, setStats, documents } = useAppStore();
+  const { accounts, removeAccount, updateAccount, settings, setSettings, updateSetting, addAccount, setDocuments, setRecentDocuments, setStats, documents, setActiveAccountId } = useAppStore();
   const [storageUsed, setStorageUsed] = useState(0);
   const [totalDocs, setTotalDocs] = useState(0);
   const [testingAI, setTestingAI] = useState(false);
@@ -290,25 +290,38 @@ export default function SettingsScreen() {
     };
     await upsertAccount(acc);
     addAccount(acc);
+    setActiveAccountId(acc.id); // <-- Switch immediately to the new account
     setPendingNewAccount(null);
     setNewAccountRangeModal(false);
     Alert.alert('¡Cuenta conectada!', `${acc.email} fue agregada correctamente.`);
-  }, [pendingNewAccount, addAccount]);
+  }, [pendingNewAccount, addAccount, setActiveAccountId]);
 
   const handleExportCsv = useCallback(async () => {
-    if (documents.length === 0) {
-      Alert.alert('Sin documentos', 'No hay documentos para exportar.');
-      return;
-    }
     setExportingCsv(true);
     try {
-      await exportDocumentsCsv(documents);
+      const { getAllFilteredDocuments } = await import('../database/documents');
+      const defaultFilters = {
+        category: 'all' as const,
+        provider: 'all' as const,
+        fileType: 'all' as const,
+        dateRange: 'all' as const,
+        starredOnly: false,
+        searchQuery: '',
+        sortBy: 'date_desc' as const,
+      };
+      const acctId = useAppStore.getState().activeAccountId ?? undefined;
+      const allDocs = await getAllFilteredDocuments(defaultFilters, acctId);
+      if (allDocs.length === 0) {
+        Alert.alert('Sin documentos', 'No hay documentos para exportar.');
+        return;
+      }
+      await exportDocumentsCsv(allDocs);
     } catch (e: any) {
       Alert.alert('Error', 'No se pudo exportar: ' + (e?.message ?? ''));
     } finally {
       setExportingCsv(false);
     }
-  }, [documents]);
+  }, []);
 
   const handleClearAllDocuments = useCallback(() => {
     Alert.alert('Eliminar todos los documentos', 'Esta acción eliminará TODOS los documentos descargados. No se puede deshacer.', [

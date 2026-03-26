@@ -1,16 +1,20 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import * as SecureStore from 'expo-secure-store';
-import * as Linking from 'expo-linking';
-import { Platform } from 'react-native';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
 WebBrowser.maybeCompleteAuthSession();
 
 // ─── Google / Gmail ──────────────────────────────────────────────────────────
+//
+// SEGURIDAD: No usamos serverAuthCode exchange con client_secret en el cliente.
+// El SDK nativo de Google Sign-In gestiona internamente el refresh de tokens.
+// Usamos GoogleSignin.getTokens() para el access token y
+// GoogleSignin.signInSilently() para refrescarlo, sin exponer ningún secreto.
 
-const GOOGLE_CLIENT_ID_IOS = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS ?? '';
+const GOOGLE_CLIENT_ID_IOS     = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS     ?? '';
 const GOOGLE_CLIENT_ID_ANDROID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID ?? '';
-const GOOGLE_CLIENT_ID_WEB = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB ?? '';
+const GOOGLE_CLIENT_ID_WEB     = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB     ?? '';
 
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
@@ -27,88 +31,75 @@ export interface OAuthResult {
   avatarUrl: string | null;
 }
 
-const EXPO_PROJECT = '@calebluna41/inboxdocs';
-const PROXY_BASE = `https://auth.expo.io/${EXPO_PROJECT}`;
+// Configurar el SDK nativo con los Client IDs de plataforma
+GoogleSignin.configure({
+  scopes: GOOGLE_SCOPES,
+  webClientId: GOOGLE_CLIENT_ID_WEB,
+  iosClientId: GOOGLE_CLIENT_ID_IOS || GOOGLE_CLIENT_ID_WEB,
+  offlineAccess: false, // No necesitamos serverAuthCode — usamos tokens nativos
+});
 
 export async function signInWithGoogle(): Promise<OAuthResult> {
-  const clientId = GOOGLE_CLIENT_ID_WEB;
+  await GoogleSignin.hasPlayServices();
 
-  // The proxy redirect URI (registered in Google Cloud)
-  const proxyRedirectUri = PROXY_BASE;
+  // Forzar logout previo para mostrar el selector de cuentas
+  try { await GoogleSignin.signOut(); } catch { /* sin sesión previa, ignorar */ }
 
-  // The return URL where the proxy will send the token back to Expo Go
-  const returnUrl = Linking.createURL('expo-auth-session');
+  const userInfo = await GoogleSignin.signIn();
 
-  const googleAuthUrl =
-    `https://accounts.google.com/o/oauth2/v2/auth` +
-    `?client_id=${encodeURIComponent(clientId)}` +
-    `&redirect_uri=${encodeURIComponent(proxyRedirectUri)}` +
-    `&response_type=token` +
-    `&scope=${encodeURIComponent(GOOGLE_SCOPES.join(' '))}` +
-    `&prompt=select_account`;
-
-  // Build the proxy start URL — it will redirect to Google, get the token,
-  // then forward it back to the Expo Go app via returnUrl
-  const startUrl = `${PROXY_BASE}/start?${new URLSearchParams({
-    authUrl: googleAuthUrl,
-    returnUrl,
-  }).toString()}`;
-
-  const result = await WebBrowser.openAuthSessionAsync(startUrl, returnUrl);
-
-  if (result.type !== 'success' || !result.url) {
-    throw new Error('Google sign-in cancelado o fallido');
+  if (userInfo.type === 'cancelled') {
+    throw new Error('Cancelaste el inicio de sesión. Puedes conectarte cuando desees.');
+  }
+  if (userInfo.type !== 'success') {
+    throw new Error('No se pudo iniciar sesión correctamente.');
   }
 
-  // The proxy appends the token as query params to the returnUrl
-  const urlPart = result.url.includes('#') ? result.url.split('#')[1] : result.url.split('?')[1] ?? '';
-  const urlParams = new URLSearchParams(urlPart);
-  const accessToken = urlParams.get('access_token');
+  // Obtener tokens directamente del SDK nativo (sin client_secret)
+  const tokens = await GoogleSignin.getTokens();
+  const accessToken = tokens.accessToken;
 
   if (!accessToken) {
-    throw new Error('No se recibió el token de acceso de Google');
+    throw new Error('No se recibió el token de acceso de Google.');
   }
 
+  // Obtener perfil del usuario
   const profileRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
+  if (!profileRes.ok) {
+    throw new Error('No se pudo obtener el perfil de Google.');
+  }
   const profile = await profileRes.json();
 
   return {
     accessToken,
-    refreshToken: '',
-    expiresAt: Date.now() + 3600 * 1000,
-    email: profile.email,
-    displayName: profile.name ?? profile.email,
-    avatarUrl: profile.picture ?? null,
+    refreshToken: '', // El SDK nativo gestiona el refresh internamente
+    expiresAt: Date.now() + 3600 * 1000, // Los tokens de Google duran ~1 hora
+    email: profile.email ?? userInfo.data?.user?.email ?? '',
+    displayName: profile.name ?? userInfo.data?.user?.name ?? profile.email,
+    avatarUrl: profile.picture ?? userInfo.data?.user?.photo ?? null,
   };
 }
 
-export async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken: string; expiresAt: number }> {
-  const clientId =
-    Platform.OS === 'ios'
-      ? GOOGLE_CLIENT_ID_IOS
-      : Platform.OS === 'android'
-      ? GOOGLE_CLIENT_ID_ANDROID
-      : GOOGLE_CLIENT_ID_WEB;
-
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      refresh_token: refreshToken,
-      grant_type: 'refresh_token',
-    }).toString(),
-  });
-
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error_description ?? 'Token refresh failed');
-
-  return {
-    accessToken: data.access_token,
-    expiresAt: Date.now() + data.expires_in * 1000,
-  };
+/**
+ * Refresca el token de Google usando el SDK nativo (signInSilently).
+ * No requiere client_secret — el SDK gestiona el refresh de forma segura.
+ */
+export async function refreshGoogleToken(): Promise<{ accessToken: string; expiresAt: number }> {
+  try {
+    // signInSilently refresca el token si ha expirado
+    await GoogleSignin.signInSilently();
+    const tokens = await GoogleSignin.getTokens();
+    return {
+      accessToken: tokens.accessToken,
+      expiresAt: Date.now() + 3600 * 1000,
+    };
+  } catch (err: any) {
+    // Si el silent sign-in falla, el usuario debe reconectarse manualmente
+    const authErr: any = new Error('Sesión expirada. Reconecta tu cuenta para continuar.');
+    authErr.code = 'SESSION_EXPIRED';
+    throw authErr;
+  }
 }
 
 // ─── Microsoft / Outlook ─────────────────────────────────────────────────────
@@ -159,15 +150,21 @@ export async function signInWithMicrosoft(): Promise<OAuthResult> {
   });
   const profile = await profileRes.json();
 
-  // Try to get photo
+  // Try to get photo as base64 data URI (URL.createObjectURL is unavailable in React Native)
   let avatarUrl: string | null = null;
   try {
     const photoRes = await fetch('https://graph.microsoft.com/v1.0/me/photo/$value', {
       headers: { Authorization: `Bearer ${tokenResponse.accessToken}` },
     });
     if (photoRes.ok) {
-      const blob = await photoRes.blob();
-      avatarUrl = URL.createObjectURL(blob);
+      const arrayBuffer = await photoRes.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < uint8Array.byteLength; i++) {
+        binary += String.fromCharCode(uint8Array[i]);
+      }
+      const base64 = btoa(binary);
+      avatarUrl = `data:image/jpeg;base64,${base64}`;
     }
   } catch {
     // No photo available

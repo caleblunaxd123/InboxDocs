@@ -2,6 +2,15 @@ import { getDatabase } from './schema';
 import { Document, DocumentFilters, CategoryId } from '../types';
 import * as FileSystem from 'expo-file-system/legacy';
 
+/** Mapa canónico de fileType → extensiones. Único punto de verdad. */
+export const FILE_TYPE_EXT_MAP: Record<string, string[]> = {
+  pdf:    ['pdf'],
+  images: ['jpg', 'jpeg', 'png', 'heic', 'webp', 'gif'],
+  word:   ['doc', 'docx'],
+  excel:  ['xls', 'xlsx'],
+  xml:    ['xml', 'txt', 'csv'],
+};
+
 function rowToDocument(row: any): Document {
   return {
     id: row.id,
@@ -26,9 +35,15 @@ function rowToDocument(row: any): Document {
   };
 }
 
-export async function insertDocument(doc: Document): Promise<void> {
+/**
+ * Inserts a document record.
+ * Returns true if the row was actually inserted, false if it already existed
+ * (UNIQUE constraint on account_id + message_id + attachment_id).
+ * Callers should use the return value to decide whether to keep a downloaded file.
+ */
+export async function insertDocument(doc: Document): Promise<boolean> {
   const db = await getDatabase();
-  await db.runAsync(
+  const result = await db.runAsync(
     `INSERT OR IGNORE INTO documents (id, account_id, message_id, attachment_id, filename, original_filename, file_path, file_size, mime_type, file_extension, category, category_confidence, sender_email, sender_name, subject, email_date, downloaded_at, is_starred, notes)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
@@ -39,6 +54,7 @@ export async function insertDocument(doc: Document): Promise<void> {
       doc.downloadedAt, doc.isStarred ? 1 : 0, doc.notes,
     ]
   );
+  return result.changes > 0;
 }
 
 export async function getDocumentById(id: string): Promise<Document | null> {
@@ -92,10 +108,15 @@ export async function deleteDocument(id: string): Promise<void> {
   }
 }
 
-export async function getFilteredDocuments(filters: DocumentFilters): Promise<Document[]> {
+export async function getFilteredDocuments(filters: DocumentFilters, accountId?: string): Promise<Document[]> {
   const db = await getDatabase();
   const conditions: string[] = [];
   const params: any[] = [];
+
+  if (accountId) {
+    conditions.push('d.account_id = ?');
+    params.push(accountId);
+  }
 
   if (filters.category !== 'all') {
     conditions.push('d.category = ?');
@@ -108,14 +129,7 @@ export async function getFilteredDocuments(filters: DocumentFilters): Promise<Do
   }
 
   if (filters.fileType !== 'all') {
-    const extMap: Record<string, string[]> = {
-      pdf: ['pdf'],
-      images: ['jpg', 'jpeg', 'png', 'heic', 'webp'],
-      word: ['docx'],
-      excel: ['xlsx'],
-      xml: ['xml', 'txt'],
-    };
-    const exts = extMap[filters.fileType] ?? [];
+    const exts = FILE_TYPE_EXT_MAP[filters.fileType] ?? [];
     if (exts.length > 0) {
       conditions.push(`d.file_extension IN (${exts.map(() => '?').join(',')})`);
       params.push(...exts);
@@ -138,7 +152,7 @@ export async function getFilteredDocuments(filters: DocumentFilters): Promise<Do
 
   if (filters.searchQuery.length >= 2) {
     const q = `%${filters.searchQuery}%`;
-    conditions.push('(d.filename LIKE ? OR d.sender_name LIKE ? OR d.sender_email LIKE ? OR d.subject LIKE ?)');
+    conditions.push('(d.original_filename LIKE ? OR d.sender_name LIKE ? OR d.sender_email LIKE ? OR d.subject LIKE ?)');
     params.push(q, q, q, q);
   }
 
@@ -147,7 +161,7 @@ export async function getFilteredDocuments(filters: DocumentFilters): Promise<Do
   const sortMap: Record<string, string> = {
     date_desc: 'd.email_date DESC',
     date_asc: 'd.email_date ASC',
-    name_asc: 'd.filename ASC',
+    name_asc: 'd.original_filename ASC',
     size_desc: 'd.file_size DESC',
     sender: 'd.sender_name ASC',
   };
@@ -166,11 +180,17 @@ export async function getFilteredDocuments(filters: DocumentFilters): Promise<Do
 export async function getFilteredDocumentsPage(
   filters: DocumentFilters,
   offset: number,
-  limit: number
+  limit: number,
+  accountId?: string
 ): Promise<Document[]> {
   const db = await getDatabase();
   const conditions: string[] = [];
   const params: any[] = [];
+
+  if (accountId) {
+    conditions.push('d.account_id = ?');
+    params.push(accountId);
+  }
 
   if (filters.category !== 'all') {
     conditions.push('d.category = ?');
@@ -181,14 +201,7 @@ export async function getFilteredDocumentsPage(
     params.push(filters.provider);
   }
   if (filters.fileType !== 'all') {
-    const extMap: Record<string, string[]> = {
-      pdf: ['pdf'],
-      images: ['jpg', 'jpeg', 'png', 'heic', 'webp'],
-      word: ['docx'],
-      excel: ['xlsx'],
-      xml: ['xml', 'txt'],
-    };
-    const exts = extMap[filters.fileType] ?? [];
+    const exts = FILE_TYPE_EXT_MAP[filters.fileType] ?? [];
     if (exts.length > 0) {
       conditions.push(`d.file_extension IN (${exts.map(() => '?').join(',')})`);
       params.push(...exts);
@@ -238,12 +251,19 @@ export async function getFilteredDocumentsPage(
  * Returns ALL documents matching the given filters — no pagination limit.
  * Use for CSV export so the full dataset is always exported.
  */
-export async function getAllFilteredDocuments(filters: DocumentFilters): Promise<Document[]> {
-  return getFilteredDocuments(filters);
+export async function getAllFilteredDocuments(filters: DocumentFilters, accountId?: string): Promise<Document[]> {
+  return getFilteredDocuments(filters, accountId);
 }
 
-export async function getRecentDocuments(limit = 10): Promise<Document[]> {
+export async function getRecentDocuments(limit = 10, accountId?: string): Promise<Document[]> {
   const db = await getDatabase();
+  if (accountId) {
+    const rows = await db.getAllAsync(
+      'SELECT * FROM documents WHERE account_id = ? ORDER BY downloaded_at DESC LIMIT ?',
+      [accountId, limit]
+    );
+    return rows.map(rowToDocument);
+  }
   const rows = await db.getAllAsync(
     'SELECT * FROM documents ORDER BY downloaded_at DESC LIMIT ?',
     [limit]
@@ -251,8 +271,15 @@ export async function getRecentDocuments(limit = 10): Promise<Document[]> {
   return rows.map(rowToDocument);
 }
 
-export async function getStarredDocuments(limit = 20): Promise<Document[]> {
+export async function getStarredDocuments(limit = 20, accountId?: string): Promise<Document[]> {
   const db = await getDatabase();
+  if (accountId) {
+    const rows = await db.getAllAsync(
+      'SELECT * FROM documents WHERE is_starred = 1 AND account_id = ? ORDER BY downloaded_at DESC LIMIT ?',
+      [accountId, limit]
+    );
+    return rows.map(rowToDocument);
+  }
   const rows = await db.getAllAsync(
     'SELECT * FROM documents WHERE is_starred = 1 ORDER BY downloaded_at DESC LIMIT ?',
     [limit]
@@ -260,16 +287,31 @@ export async function getStarredDocuments(limit = 20): Promise<Document[]> {
   return rows.map(rowToDocument);
 }
 
-export async function getDocumentStats(): Promise<{ total: number; totalSize: number }> {
+export async function getDocumentStats(accountId?: string): Promise<{ total: number; totalSize: number }> {
   const db = await getDatabase();
+  if (accountId) {
+    const row: any = await db.getFirstAsync(
+      'SELECT COUNT(*) as total, COALESCE(SUM(file_size), 0) as total_size FROM documents WHERE account_id = ?',
+      [accountId]
+    );
+    return { total: row?.total ?? 0, totalSize: row?.total_size ?? 0 };
+  }
   const row: any = await db.getFirstAsync(
     'SELECT COUNT(*) as total, COALESCE(SUM(file_size), 0) as total_size FROM documents'
   );
   return { total: row?.total ?? 0, totalSize: row?.total_size ?? 0 };
 }
 
-export async function getDocumentsByCategory(): Promise<{ category: string; count: number; totalSize: number }[]> {
+export async function getDocumentsByCategory(accountId?: string): Promise<{ category: string; count: number; totalSize: number }[]> {
   const db = await getDatabase();
+  if (accountId) {
+    const rows = await db.getAllAsync(
+      `SELECT category, COUNT(*) as count, COALESCE(SUM(file_size), 0) as total_size
+       FROM documents WHERE account_id = ? GROUP BY category ORDER BY count DESC`,
+      [accountId]
+    );
+    return (rows as any[]).map(r => ({ category: r.category, count: r.count, totalSize: r.total_size }));
+  }
   const rows = await db.getAllAsync(
     `SELECT category, COUNT(*) as count, COALESCE(SUM(file_size), 0) as total_size
      FROM documents GROUP BY category ORDER BY count DESC`
@@ -277,13 +319,23 @@ export async function getDocumentsByCategory(): Promise<{ category: string; coun
   return (rows as any[]).map(r => ({ category: r.category, count: r.count, totalSize: r.total_size }));
 }
 
-export async function getDocumentsByMonth(months = 12): Promise<{ month: string; count: number }[]> {
+export async function getDocumentsByMonth(months = 12, accountId?: string): Promise<{ month: string; count: number }[]> {
   const db = await getDatabase();
   // Use exact date arithmetic instead of the 30-days-per-month approximation
   const since = new Date();
   since.setMonth(since.getMonth() - months);
   since.setDate(1);
   since.setHours(0, 0, 0, 0);
+  if (accountId) {
+    const rows = await db.getAllAsync(
+      `SELECT strftime('%Y-%m', datetime(email_date/1000, 'unixepoch')) as month, COUNT(*) as count
+       FROM documents
+       WHERE email_date >= ? AND account_id = ?
+       GROUP BY month ORDER BY month ASC`,
+      [since.getTime(), accountId]
+    );
+    return (rows as any[]).map(r => ({ month: r.month, count: r.count }));
+  }
   const rows = await db.getAllAsync(
     `SELECT strftime('%Y-%m', datetime(email_date/1000, 'unixepoch')) as month, COUNT(*) as count
      FROM documents
@@ -294,8 +346,22 @@ export async function getDocumentsByMonth(months = 12): Promise<{ month: string;
   return (rows as any[]).map(r => ({ month: r.month, count: r.count }));
 }
 
-export async function getTopSenders(limit = 8): Promise<{ name: string; email: string; count: number; totalSize: number }[]> {
+export async function getTopSenders(limit = 8, accountId?: string): Promise<{ name: string; email: string; count: number; totalSize: number }[]> {
   const db = await getDatabase();
+  if (accountId) {
+    const rows = await db.getAllAsync(
+      `SELECT
+         COALESCE(NULLIF(sender_name, ''), sender_email) as name,
+         sender_email as email,
+         COUNT(*) as count,
+         COALESCE(SUM(file_size), 0) as total_size
+       FROM documents
+       WHERE sender_email IS NOT NULL AND sender_email != '' AND account_id = ?
+       GROUP BY sender_email ORDER BY count DESC LIMIT ?`,
+      [accountId, limit]
+    );
+    return (rows as any[]).map(r => ({ name: r.name, email: r.email, count: r.count, totalSize: r.total_size }));
+  }
   const rows = await db.getAllAsync(
     `SELECT
        COALESCE(NULLIF(sender_name, ''), sender_email) as name,
@@ -310,8 +376,15 @@ export async function getTopSenders(limit = 8): Promise<{ name: string; email: s
   return (rows as any[]).map(r => ({ name: r.name, email: r.email, count: r.count, totalSize: r.total_size }));
 }
 
-export async function getDocumentsByFileType(): Promise<{ ext: string; count: number }[]> {
+export async function getDocumentsByFileType(accountId?: string): Promise<{ ext: string; count: number }[]> {
   const db = await getDatabase();
+  if (accountId) {
+    const rows = await db.getAllAsync(
+      `SELECT file_extension as ext, COUNT(*) as count FROM documents WHERE account_id = ? GROUP BY file_extension ORDER BY count DESC`,
+      [accountId]
+    );
+    return (rows as any[]).map(r => ({ ext: r.ext, count: r.count }));
+  }
   const rows = await db.getAllAsync(
     `SELECT file_extension as ext, COUNT(*) as count FROM documents GROUP BY file_extension ORDER BY count DESC`
   );

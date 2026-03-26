@@ -72,10 +72,38 @@ export async function initializeDatabase(): Promise<void> {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS sunat_invoices (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      sunat_document_type TEXT NOT NULL DEFAULT 'unknown',
+      serie TEXT NOT NULL DEFAULT '',
+      correlativo TEXT NOT NULL DEFAULT '',
+      full_number TEXT NOT NULL DEFAULT '',
+      issue_date TEXT NOT NULL DEFAULT '',
+      due_date TEXT,
+      issuer_ruc TEXT NOT NULL DEFAULT '',
+      issuer_name TEXT NOT NULL DEFAULT '',
+      issuer_address TEXT,
+      receiver_ruc TEXT,
+      receiver_name TEXT,
+      currency TEXT NOT NULL DEFAULT 'PEN',
+      subtotal REAL NOT NULL DEFAULT 0,
+      igv REAL NOT NULL DEFAULT 0,
+      other_charges REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      line_items TEXT NOT NULL DEFAULT '[]',
+      extracted_at INTEGER NOT NULL,
+      extraction_source TEXT NOT NULL DEFAULT 'xml',
+      raw_xml TEXT,
+      UNIQUE(document_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_documents_account ON documents(account_id);
     CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
     CREATE INDEX IF NOT EXISTS idx_documents_email_date ON documents(email_date DESC);
     CREATE INDEX IF NOT EXISTS idx_documents_starred ON documents(is_starred);
+    CREATE INDEX IF NOT EXISTS idx_sunat_issuer ON sunat_invoices(issuer_ruc);
+    CREATE INDEX IF NOT EXISTS idx_sunat_issue_date ON sunat_invoices(issue_date);
   `);
 
   // Migration: ensure UNIQUE index exists on DBs created before the constraint was added.
@@ -100,7 +128,12 @@ export async function initializeDatabase(): Promise<void> {
     sync_frequency: 'daily',
     sync_on_open: 'true',
     notify_on_new_docs: 'true',
-    allowed_extensions: JSON.stringify(['pdf', 'jpg', 'jpeg', 'png', 'docx', 'xlsx', 'xml']),
+    allowed_extensions: JSON.stringify([
+      'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+      'jpg', 'jpeg', 'png', 'heic', 'webp', 'gif',
+      'txt', 'csv', 'xml', 'json',
+      'zip', 'rar',
+    ]),
     openai_api_key: '',
     default_sync_from_days: '30',
     theme: 'system',

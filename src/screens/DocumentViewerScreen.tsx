@@ -56,12 +56,17 @@ export default function DocumentViewerScreen() {
 
   useEffect(() => {
     async function prepare() {
+      // Ref local para rastrear si el archivo existe DENTRO del efecto
+      // (no depender del state React que puede ser stale en el catch)
+      let localFileExists = false;
+
       try {
         const info = await FileSystem.getInfoAsync(filePath);
         if (!info.exists) {
           setFileExists(false);
           return;
         }
+        localFileExists = true;
         setFileExists(true);
 
         // Read PDF/DOCX/XLSX as base64 on BOTH platforms (avoids iOS onLoadEnd bug with file:// URIs)
@@ -93,11 +98,11 @@ export default function DocumentViewerScreen() {
 
         setDataReady(true);
       } catch (err: any) {
-        // If download failed (offline + not cached), show offline error for viewer formats
-        if ((isPdf || isDocx || isXlsx) && !fileExists) {
+        if (!localFileExists) {
+          // El archivo en sí no existe (getInfoAsync falló o info.exists=false)
           setFileExists(false);
         } else if (isPdf || isDocx || isXlsx) {
-          // File exists but lib download failed (offline, not cached yet)
+          // El archivo existe pero la librería no se pudo descargar (sin internet, no cacheada)
           setLibOfflineError(true);
           setFileExists(true);
           setDataReady(true);

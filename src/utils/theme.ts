@@ -101,7 +101,9 @@ export const Typography = {
   headingS: { fontSize: 13, fontWeight: '600' as const, lineHeight: 18 },
   bodyL: { fontSize: 16, fontWeight: '400' as const, lineHeight: 24 },
   bodyM: { fontSize: 14, fontWeight: '400' as const, lineHeight: 20 },
+  bodyS: { fontSize: 12, lineHeight: 18, fontWeight: '400' as const },
   caption: { fontSize: 12, fontWeight: '400' as const },
+  caption2: { fontSize: 10, lineHeight: 14, fontWeight: '400' as const },
   mono: { fontSize: 13, fontFamily: 'monospace' as const },
 };
 
@@ -120,7 +122,21 @@ export const Shadows = {
     shadowRadius: 14,
     elevation: 4,
   },
+  card: {
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 4,
+  },
   large: {
+    shadowColor: '#64748B',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  strong: {
     shadowColor: '#64748B',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.1,
