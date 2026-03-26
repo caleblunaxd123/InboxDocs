@@ -27,9 +27,10 @@ import { CategoryBadge, ProviderBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { useAppStore } from '../store/useAppStore';
 import { getDocumentById, toggleStarDocument, updateDocumentNotes, deleteDocument, updateDocumentCategory } from '../database/documents';
-import { Document, CategoryId } from '../types';
+import { Document, CategoryId, SunatInvoice } from '../types';
 import { formatBytes } from '../utils/format';
 import { getFileTypeUI } from '../utils/fileTypes';
+import { getInvoiceForDocument } from '../services/invoiceService';
 
 const CATEGORIES: CategoryId[] = ['invoice', 'receipt', 'statement', 'contract', 'tax', 'insurance', 'medical', 'other'];
 
@@ -47,6 +48,7 @@ export default function DocumentDetailScreen() {
   const [textContent, setTextContent] = useState<string | null>(null);
   const [loadingText, setLoadingText] = useState(false);
   const [fileExists, setFileExists] = useState<boolean | null>(null);
+  const [sunatInvoice, setSunatInvoice] = useState<SunatInvoice | null>(null);
 
   useEffect(() => {
     loadDoc();
@@ -74,6 +76,11 @@ export default function DocumentDetailScreen() {
       } finally {
         setLoadingText(false);
       }
+    }
+    // Load SUNAT invoice if present
+    if (d) {
+      const inv = await getInvoiceForDocument(d.id);
+      setSunatInvoice(inv);
     }
   }
 
@@ -250,6 +257,14 @@ export default function DocumentDetailScreen() {
                 mimeType: doc.mimeType,
                 fileExtension: doc.fileExtension,
               })}
+            />
+          )}
+          {sunatInvoice && (
+            <ActionButton
+              icon="receipt"
+              label="Ver factura"
+              color="#2563EB"
+              onPress={() => navigation.navigate('InvoiceDetail', { documentId: doc.id })}
             />
           )}
           <ActionButton icon="share-variant-outline" label="Compartir" onPress={handleShare} />

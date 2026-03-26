@@ -18,6 +18,7 @@ import DocumentDetailScreen from '../screens/DocumentDetailScreen';
 import DocumentViewerScreen from '../screens/DocumentViewerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import InsightsScreen from '../screens/InsightsScreen';
+import InboxScreen from '../screens/InboxScreen';
 
 export type RootStackParams = {
   Main: undefined;
@@ -37,6 +38,7 @@ export type AuthStackParams = {
 
 export type MainTabParams = {
   Home: undefined;
+  Inbox: undefined;
   Repository: undefined;
   Insights: undefined;
   Settings: undefined;
@@ -74,6 +76,7 @@ function MainTabs() {
         tabBarIcon: ({ color, size, focused }) => {
           const icons: Record<string, { outline: string; filled: string }> = {
             Home:       { outline: 'home-outline',       filled: 'home' },
+            Inbox:      { outline: 'email-outline',      filled: 'email' },
             Repository: { outline: 'folder-outline',     filled: 'folder' },
             Insights:   { outline: 'chart-box-outline',  filled: 'chart-box' },
             Settings:   { outline: 'cog-outline',        filled: 'cog' },
@@ -90,6 +93,7 @@ function MainTabs() {
       })}
     >
       <Tab.Screen name="Home"       component={HomeScreen}       options={{ tabBarLabel: 'Inicio' }} />
+      <Tab.Screen name="Inbox"      component={InboxScreen}      options={{ tabBarLabel: 'Bandeja' }} />
       <Tab.Screen name="Repository" component={RepositoryScreen} options={{ tabBarLabel: 'Documentos' }} />
       <Tab.Screen name="Insights"   component={InsightsScreen}   options={{ tabBarLabel: 'Estadísticas' }} />
       <Tab.Screen name="Settings"   component={SettingsScreen}   options={{ tabBarLabel: 'Ajustes' }} />

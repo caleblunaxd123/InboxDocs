@@ -21,6 +21,13 @@ import {
   getDocumentsByFileType,
   getDocumentStats,
 } from '../database/documents';
+import {
+  getInvoiceGlobalStats,
+  getInvoiceMonthlySummary,
+  getTopIssuers,
+  InvoiceMonthlySummary,
+  InvoiceIssuerSummary,
+} from '../database/invoices';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CHART_WIDTH = SCREEN_WIDTH - 32;
@@ -50,6 +57,10 @@ export default function InsightsScreen() {
   const [monthlyData, setMonthlyData] = useState<{ month: string; count: number }[]>([]);
   const [topSenders, setTopSenders] = useState<{ name: string; email: string; count: number; totalSize: number }[]>([]);
   const [fileTypes, setFileTypes] = useState<{ ext: string; count: number }[]>([]);
+  // SUNAT invoice analytics
+  const [invoiceGlobal, setInvoiceGlobal] = useState({ totalFacturas: 0, totalBoletas: 0, totalGastado: 0, totalIgv: 0 });
+  const [invoiceMonthly, setInvoiceMonthly] = useState<InvoiceMonthlySummary[]>([]);
+  const [topIssuers, setTopIssuers] = useState<InvoiceIssuerSummary[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -60,18 +71,24 @@ export default function InsightsScreen() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [s, cats, months, senders, types] = await Promise.all([
+      const [s, cats, months, senders, types, invGlobal, invMonthly, issuers] = await Promise.all([
         getDocumentStats(),
         getDocumentsByCategory(),
         getDocumentsByMonth(6),
         getTopSenders(8),
         getDocumentsByFileType(),
+        getInvoiceGlobalStats(),
+        getInvoiceMonthlySummary(6),
+        getTopIssuers(5),
       ]);
       setStats(s);
       setCategoryData(cats);
       setMonthlyData(months);
       setTopSenders(senders);
       setFileTypes(types);
+      setInvoiceGlobal(invGlobal);
+      setInvoiceMonthly(invMonthly);
+      setTopIssuers(issuers);
     } finally {
       setLoading(false);
     }
@@ -269,6 +286,87 @@ export default function InsightsScreen() {
               </View>
             )}
 
+            {/* ─── Panel financiero SUNAT ─── */}
+            {(invoiceGlobal.totalFacturas > 0 || invoiceGlobal.totalBoletas > 0) && (
+              <>
+                {/* KPIs globales */}
+                <View style={[styles.card, { backgroundColor: theme.surface }]}>
+                  <View style={styles.cardHeader}>
+                    <MaterialCommunityIcons name="receipt" size={18} color="#2563EB" />
+                    <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Panel SUNAT</Text>
+                    <Text style={[styles.cardSubtitle, { color: theme.textMuted }]}>comprobantes electrónicos</Text>
+                  </View>
+                  <View style={styles.kpiRow}>
+                    <View style={[styles.kpiBox, { backgroundColor: '#EFF6FF' }]}>
+                      <Text style={[styles.kpiValue, { color: '#2563EB' }]}>{invoiceGlobal.totalFacturas}</Text>
+                      <Text style={[styles.kpiLabel, { color: '#2563EB' }]}>Facturas</Text>
+                    </View>
+                    <View style={[styles.kpiBox, { backgroundColor: '#F0FDF4' }]}>
+                      <Text style={[styles.kpiValue, { color: '#16A34A' }]}>{invoiceGlobal.totalBoletas}</Text>
+                      <Text style={[styles.kpiLabel, { color: '#16A34A' }]}>Boletas</Text>
+                    </View>
+                    <View style={[styles.kpiBox, { backgroundColor: '#FFF7ED' }]}>
+                      <Text style={[styles.kpiValue, { color: '#D97706' }]}>S/ {invoiceGlobal.totalIgv.toFixed(0)}</Text>
+                      <Text style={[styles.kpiLabel, { color: '#D97706' }]}>IGV pagado</Text>
+                    </View>
+                  </View>
+                  <View style={[styles.totalPaidRow, { borderTopColor: theme.border }]}>
+                    <Text style={[styles.totalPaidLabel, { color: theme.textSecondary }]}>Total gastado</Text>
+                    <Text style={[styles.totalPaidValue, { color: theme.textPrimary }]}>S/ {invoiceGlobal.totalGastado.toFixed(2)}</Text>
+                  </View>
+                </View>
+
+                {/* Gasto mensual */}
+                {invoiceMonthly.length > 0 && (
+                  <View style={[styles.card, { backgroundColor: theme.surface }]}>
+                    <View style={styles.cardHeader}>
+                      <MaterialCommunityIcons name="chart-timeline-variant" size={18} color="#8B5CF6" />
+                      <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Gasto mensual</Text>
+                    </View>
+                    {invoiceMonthly.map((m) => {
+                      const maxTotal = Math.max(...invoiceMonthly.map(x => x.total), 1);
+                      const pct = m.total / maxTotal;
+                      const [year, month] = m.month.split('-');
+                      const monthNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                      const label = `${monthNames[parseInt(month) - 1]} ${year}`;
+                      return (
+                        <View key={m.month} style={styles.monthRow}>
+                          <Text style={[styles.monthLabel, { color: theme.textSecondary }]}>{label}</Text>
+                          <View style={styles.monthBarWrap}>
+                            <View style={[styles.monthBar, { width: `${Math.max(pct * 100, 4)}%`, backgroundColor: '#8B5CF6' }]} />
+                          </View>
+                          <Text style={[styles.monthValue, { color: theme.textPrimary }]}>S/ {m.total.toFixed(0)}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
+                {/* Top proveedores */}
+                {topIssuers.length > 0 && (
+                  <View style={[styles.card, { backgroundColor: theme.surface }]}>
+                    <View style={styles.cardHeader}>
+                      <MaterialCommunityIcons name="office-building-outline" size={18} color="#EC4899" />
+                      <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Top proveedores</Text>
+                    </View>
+                    {topIssuers.map((issuer, idx) => (
+                      <View key={issuer.issuerRuc} style={[styles.senderRow, idx < topIssuers.length - 1 && { borderBottomWidth: 1, borderBottomColor: theme.border }]}>
+                        <Text style={[styles.senderRank, { color: idx < 3 ? '#F59E0B' : theme.textMuted }]}>#{idx + 1}</Text>
+                        <View style={styles.senderInfo}>
+                          <Text style={[styles.senderName, { color: theme.textPrimary }]} numberOfLines={1}>{issuer.issuerName}</Text>
+                          <Text style={[styles.senderEmail, { color: theme.textMuted }]}>RUC: {issuer.issuerRuc}</Text>
+                        </View>
+                        <View style={styles.senderStats}>
+                          <Text style={[styles.senderCount, { color: '#2563EB' }]}>S/ {issuer.total.toFixed(0)}</Text>
+                          <Text style={[styles.senderSize, { color: theme.textMuted }]}>{issuer.count} comp.</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </>
+            )}
+
             {/* Bottom padding */}
             <View style={{ height: 24 }} />
           </>
@@ -343,7 +441,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 10,
   },
-  senderRank: { ...Typography.bodyS, fontWeight: '700', width: 24, textAlign: 'center' },
+  senderRank: { ...Typography.caption, fontWeight: '700', width: 24, textAlign: 'center' },
   senderAvatar: {
     width: 36,
     height: 36,
@@ -354,9 +452,23 @@ const styles = StyleSheet.create({
   },
   senderInitials: { fontSize: 13, fontWeight: '700' },
   senderInfo: { flex: 1, gap: 1 },
-  senderName: { ...Typography.bodyS, fontWeight: '600' },
+  senderName: { ...Typography.caption, fontWeight: '600' },
   senderEmail: { ...Typography.caption },
   senderStats: { alignItems: 'flex-end', gap: 1 },
-  senderCount: { ...Typography.bodyS, fontWeight: '700' },
+  senderCount: { ...Typography.caption, fontWeight: '700' },
   senderSize: { ...Typography.caption },
+
+  // SUNAT KPI styles
+  kpiRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  kpiBox: { flex: 1, borderRadius: 10, padding: 10, alignItems: 'center', gap: 2 },
+  kpiValue: { fontSize: 18, fontWeight: '700' },
+  kpiLabel: { fontSize: 10, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.3 },
+  totalPaidRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, paddingTop: 10, marginTop: 4 },
+  totalPaidLabel: { ...Typography.bodyM },
+  totalPaidValue: { fontSize: 20, fontWeight: '700' },
+  monthRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  monthLabel: { width: 60, fontSize: 12 },
+  monthBarWrap: { flex: 1, height: 8, backgroundColor: '#E5E7EB', borderRadius: 4, overflow: 'hidden' },
+  monthBar: { height: '100%', borderRadius: 4 },
+  monthValue: { width: 56, fontSize: 12, fontWeight: '600', textAlign: 'right' },
 });
