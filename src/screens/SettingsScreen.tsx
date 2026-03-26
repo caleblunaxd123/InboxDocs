@@ -30,7 +30,7 @@ import { signInWithGoogle, signInWithMicrosoft } from '../services/authService';
 import { AppSettings, Account } from '../types';
 import * as FileSystem from 'expo-file-system/legacy';
 import { getDocumentStats, deleteAllDocuments } from '../database/documents';
-import { exportDocumentsCsv } from '../utils/exportCsv';
+import { exportDocumentsExcel } from '../utils/exportExcel';
 import { formatBytes } from '../utils/format';
 import { v4 as uuidv4 } from 'uuid';
 import * as LocalAuthentication from 'expo-local-authentication';
@@ -315,7 +315,7 @@ export default function SettingsScreen() {
         Alert.alert('Sin documentos', 'No hay documentos para exportar.');
         return;
       }
-      await exportDocumentsCsv(allDocs);
+      await exportDocumentsExcel(allDocs);
     } catch (e: any) {
       Alert.alert('Error', 'No se pudo exportar: ' + (e?.message ?? ''));
     } finally {
@@ -450,6 +450,44 @@ export default function SettingsScreen() {
           />
           <Divider theme={theme} />
           <SyncFrequencyRow settings={settings} updateSetting={updateSetting} theme={theme} />
+          <Divider theme={theme} />
+          <View style={styles.settingRow}>
+            <View style={[styles.rowIcon, { backgroundColor: '#3B82F620' }]}>
+              <MaterialCommunityIcons name="file-cog-outline" size={16} color="#3B82F6" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.settingLabel, { color: theme.textPrimary }]}>Tamaño máximo</Text>
+              <Text style={[styles.settingDescription, { color: theme.textMuted }]}>
+                Adjuntos mayores a {settings?.max_file_size_mb ?? 25} MB serán omitidos
+              </Text>
+            </View>
+            <View style={styles.freqOptions}>
+              {[10, 25, 50].map((mb) => (
+                <TouchableOpacity
+                  key={mb}
+                  style={[
+                    styles.freqOption,
+                    { borderColor: theme.border, backgroundColor: theme.surface },
+                    (settings?.max_file_size_mb ?? 25) === mb && styles.freqOptionActive,
+                  ]}
+                  onPress={async () => {
+                    updateSetting('max_file_size_mb', mb);
+                    await setSetting('max_file_size_mb', String(mb));
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.freqOptionText,
+                      { color: theme.textSecondary },
+                      (settings?.max_file_size_mb ?? 25) === mb && styles.freqOptionTextActive,
+                    ]}
+                  >
+                    {mb} MB
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
         </SettingsCard>
 
         {/* AI Settings */}
@@ -507,7 +545,7 @@ export default function SettingsScreen() {
               }
             </View>
             <Text style={[styles.exportText, totalDocs === 0 && { color: theme.textMuted }]}>
-              Exportar lista como CSV
+              Exportar reporte Excel
             </Text>
           </TouchableOpacity>
           <Divider theme={theme} />

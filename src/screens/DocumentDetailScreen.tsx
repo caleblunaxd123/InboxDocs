@@ -27,7 +27,8 @@ import { CategoryBadge, ProviderBadge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { useAppStore } from '../store/useAppStore';
 import { getDocumentById, toggleStarDocument, updateDocumentNotes, deleteDocument, updateDocumentCategory } from '../database/documents';
-import { Document, CategoryId } from '../types';
+import { getSunatInvoiceByDocumentId } from '../database/invoices';
+import { Document, CategoryId, SunatInvoice } from '../types';
 import { formatBytes } from '../utils/format';
 import { getFileTypeUI } from '../utils/fileTypes';
 
@@ -47,6 +48,7 @@ export default function DocumentDetailScreen() {
   const [textContent, setTextContent] = useState<string | null>(null);
   const [loadingText, setLoadingText] = useState(false);
   const [fileExists, setFileExists] = useState<boolean | null>(null);
+  const [invoice, setInvoice] = useState<SunatInvoice | null>(null);
 
   useEffect(() => {
     loadDoc();
@@ -62,6 +64,11 @@ export default function DocumentDetailScreen() {
     const d = await getDocumentById(documentId);
     setDoc(d);
     if (d?.notes) setNotesInput(d.notes);
+    // Check if this document has extracted SUNAT invoice data
+    if (d) {
+      const inv = await getSunatInvoiceByDocumentId(d.id);
+      setInvoice(inv);
+    }
     if (d && ['xml', 'txt', 'csv'].includes(d.fileExtension)) {
       setLoadingText(true);
       try {
@@ -256,6 +263,28 @@ export default function DocumentDetailScreen() {
           <ActionButton icon="note-text-outline" label={doc.notes ? 'Ver nota' : 'Añadir nota'} onPress={() => setNotesModalVisible(true)} />
           <ActionButton icon="delete-outline" label="Eliminar" color={Colors.danger} onPress={handleDelete} />
         </View>
+
+        {/* SUNAT Invoice Button */}
+        {invoice && (
+          <TouchableOpacity
+            style={[styles.invoiceBtn, { backgroundColor: '#16A34A18', borderColor: '#16A34A40' }]}
+            onPress={() => navigation.navigate('InvoiceDetail', { documentId: doc.id })}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.invoiceBtnIcon, { backgroundColor: '#16A34A22' }]}>
+              <MaterialCommunityIcons name="receipt" size={24} color="#16A34A" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.invoiceBtnTitle, { color: theme.textPrimary }]}>
+                {invoice.sunatDocumentType === 'factura' ? 'Factura Electrónica' : 'Boleta de Venta'}
+              </Text>
+              <Text style={[styles.invoiceBtnSub, { color: theme.textMuted }]}>
+                {invoice.fullNumber} · RUC {invoice.issuerRuc} · S/ {invoice.total.toFixed(2)}
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#16A34A" />
+          </TouchableOpacity>
+        )}
 
         {doc.notes ? (
           <TouchableOpacity style={[styles.notesSection, { backgroundColor: theme.surface }]} onPress={() => setNotesModalVisible(true)}>
@@ -455,4 +484,24 @@ const styles = StyleSheet.create({
   catCancelText: { ...Typography.bodyM, color: Colors.textSecondary },
   unavailableBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#FEF2F2', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   unavailableText: { fontSize: 11, color: Colors.danger, fontWeight: '600' },
+  invoiceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    marginHorizontal: Spacing.base,
+    marginTop: Spacing.sm,
+    padding: Spacing.base,
+    borderRadius: BorderRadius.card,
+    borderWidth: 1.5,
+    ...Shadows.subtle,
+  },
+  invoiceBtnIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  invoiceBtnTitle: { ...Typography.bodyM, fontWeight: '700' },
+  invoiceBtnSub: { ...Typography.caption, marginTop: 2 },
 });

@@ -6,6 +6,8 @@ import {
   ScrollView,
   Dimensions,
   ActivityIndicator,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -21,7 +23,10 @@ import {
   getTopSenders,
   getDocumentsByFileType,
   getDocumentStats,
+  getAllFilteredDocuments,
 } from '../database/documents';
+import { getInvoiceGlobalStats, getInvoiceMonthlySummary, getTopIssuers } from '../database/invoices';
+import { exportDocumentsExcel } from '../utils/exportExcel';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CHART_WIDTH = SCREEN_WIDTH - 32;
@@ -47,11 +52,14 @@ export default function InsightsScreen() {
   const theme = useTheme();
   const { activeAccountId } = useAppStore();
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [stats, setStats] = useState({ total: 0, totalSize: 0 });
   const [categoryData, setCategoryData] = useState<{ category: string; count: number; totalSize: number }[]>([]);
   const [monthlyData, setMonthlyData] = useState<{ month: string; count: number }[]>([]);
   const [topSenders, setTopSenders] = useState<{ name: string; email: string; count: number; totalSize: number }[]>([]);
   const [fileTypes, setFileTypes] = useState<{ ext: string; count: number }[]>([]);
+  const [invoiceStats, setInvoiceStats] = useState<{ totalFacturas: number; totalBoletas: number; totalGastado: number; totalIgv: number } | null>(null);
+  const [topIssuers, setTopIssuers] = useState<{ issuerRuc: string; issuerName: string; count: number; total: number; igv: number }[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -75,6 +83,17 @@ export default function InsightsScreen() {
       setMonthlyData(months);
       setTopSenders(senders);
       setFileTypes(types);
+      // SUNAT invoice stats
+      try {
+        const [invStats, issuers] = await Promise.all([
+          getInvoiceGlobalStats(),
+          getTopIssuers(5),
+        ]);
+        setInvoiceStats(invStats);
+        setTopIssuers(issuers);
+      } catch {
+        // Table may not exist yet
+      }
     } finally {
       setLoading(false);
     }
@@ -159,12 +178,51 @@ export default function InsightsScreen() {
           <View style={styles.headerIcon}>
             <MaterialCommunityIcons name="chart-box" size={20} color="#fff" />
           </View>
-          <View>
-            <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>Insights</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>Estadísticas</Text>
             <Text style={[styles.headerSub, { color: theme.textMuted }]}>
               {stats.total} documentos · {formatBytes(stats.totalSize)}
             </Text>
           </View>
+          {stats.total > 0 && (
+            <TouchableOpacity
+              style={[styles.exportBtn, { backgroundColor: '#10B98118', borderColor: '#10B98140' }]}
+              onPress={async () => {
+                setExporting(true);
+                try {
+                  const defaultFilters = {
+                    category: 'all' as const,
+                    provider: 'all' as const,
+                    fileType: 'all' as const,
+                    dateRange: 'all' as const,
+                    starredOnly: false,
+                    searchQuery: '',
+                    sortBy: 'date_desc' as const,
+                  };
+                  const acctId = activeAccountId ?? undefined;
+                  const allDocs = await getAllFilteredDocuments(defaultFilters, acctId);
+                  if (allDocs.length === 0) {
+                    Alert.alert('Sin documentos', 'No hay documentos para exportar.');
+                    return;
+                  }
+                  await exportDocumentsExcel(allDocs);
+                } catch (e: any) {
+                  Alert.alert('Error', e?.message ?? 'No se pudo exportar.');
+                } finally {
+                  setExporting(false);
+                }
+              }}
+              disabled={exporting}
+              activeOpacity={0.7}
+            >
+              {exporting ? (
+                <ActivityIndicator size="small" color="#10B981" />
+              ) : (
+                <MaterialCommunityIcons name="microsoft-excel" size={18} color="#10B981" />
+              )}
+              <Text style={{ color: '#10B981', fontWeight: '600', fontSize: 12 }}>Exportar</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {isEmpty ? (
@@ -272,6 +330,49 @@ export default function InsightsScreen() {
               </View>
             )}
 
+            {/* ─── Facturas SUNAT ─── */}
+            {invoiceStats && (invoiceStats.totalFacturas + invoiceStats.totalBoletas) > 0 && (
+              <View style={[styles.card, { backgroundColor: theme.surface }]}>
+                <View style={styles.cardHeader}>
+                  <MaterialCommunityIcons name="receipt" size={18} color="#16A34A" />
+                  <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>Facturas / Boletas</Text>
+                  <Text style={[styles.cardSubtitle, { color: theme.textMuted }]}>SUNAT</Text>
+                </View>
+                <View style={styles.invoiceStatsRow}>
+                  <View style={[styles.invoiceStat, { backgroundColor: '#16A34A14' }]}>
+                    <Text style={[styles.invoiceStatValue, { color: '#16A34A' }]}>{invoiceStats.totalFacturas + invoiceStats.totalBoletas}</Text>
+                    <Text style={[styles.invoiceStatLabel, { color: theme.textMuted }]}>Comprobantes</Text>
+                  </View>
+                  <View style={[styles.invoiceStat, { backgroundColor: '#6366F114' }]}>
+                    <Text style={[styles.invoiceStatValue, { color: '#6366F1' }]}>S/ {invoiceStats.totalGastado.toFixed(2)}</Text>
+                    <Text style={[styles.invoiceStatLabel, { color: theme.textMuted }]}>Total</Text>
+                  </View>
+                  <View style={[styles.invoiceStat, { backgroundColor: '#F59E0B14' }]}>
+                    <Text style={[styles.invoiceStatValue, { color: '#F59E0B' }]}>S/ {invoiceStats.totalIgv.toFixed(2)}</Text>
+                    <Text style={[styles.invoiceStatLabel, { color: theme.textMuted }]}>IGV</Text>
+                  </View>
+                </View>
+                {topIssuers.length > 0 && (
+                  <>
+                    <Text style={[styles.invoiceSubheader, { color: theme.textMuted }]}>TOP PROVEEDORES</Text>
+                    {topIssuers.map((issuer, idx) => (
+                      <View key={issuer.issuerRuc} style={[styles.senderRow, idx < topIssuers.length - 1 && { borderBottomWidth: 1, borderBottomColor: theme.border }]}>
+                        <Text style={[styles.senderRank, { color: idx < 3 ? '#16A34A' : theme.textMuted }]}>#{idx + 1}</Text>
+                        <View style={styles.senderInfo}>
+                          <Text style={[styles.senderName, { color: theme.textPrimary }]} numberOfLines={1}>{issuer.issuerName}</Text>
+                          <Text style={[styles.senderEmail, { color: theme.textMuted }]}>RUC {issuer.issuerRuc}</Text>
+                        </View>
+                        <View style={styles.senderStats}>
+                          <Text style={[styles.senderCount, { color: '#16A34A' }]}>{issuer.count}</Text>
+                          <Text style={[styles.senderSize, { color: theme.textMuted }]}>S/ {issuer.total.toFixed(0)}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </>
+                )}
+              </View>
+            )}
+
             {/* Bottom padding */}
             <View style={{ height: 24 }} />
           </>
@@ -307,6 +408,15 @@ const styles = StyleSheet.create({
   },
   headerTitle: { ...Typography.headingM, fontWeight: '700' },
   headerSub: { ...Typography.caption, marginTop: 1 },
+  exportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
 
   card: {
     borderRadius: BorderRadius.card,
@@ -362,4 +472,15 @@ const styles = StyleSheet.create({
   senderStats: { alignItems: 'flex-end', gap: 1 },
   senderCount: { ...Typography.bodyS, fontWeight: '700' },
   senderSize: { ...Typography.caption },
+  invoiceStatsRow: { flexDirection: 'row', gap: 8 },
+  invoiceStat: {
+    flex: 1,
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    gap: 4,
+  },
+  invoiceStatValue: { fontSize: 15, fontWeight: '700' },
+  invoiceStatLabel: { ...Typography.caption },
+  invoiceSubheader: { ...Typography.caption, fontWeight: '700', letterSpacing: 0.5, marginTop: 8 },
 });

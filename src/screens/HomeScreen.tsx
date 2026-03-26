@@ -81,13 +81,18 @@ export default function HomeScreen() {
     setRecentDocuments(recent);
     setStarredDocuments(starred);
     setStats(stats.total, stats.totalSize);
-  }, []);
+  }, [activeAccountId]);
 
   useFocusEffect(
     useCallback(() => {
       loadData();
     }, [loadData])
   );
+
+  // Recargar datos cuando cambie la cuenta seleccionada
+  useEffect(() => {
+    loadData();
+  }, [activeAccountId]);
 
   const handleSyncAccount = useCallback(
     async (accountId: string, accountOverride?: Account, syncToDateOverride?: Date, allowedExtensionsOverride?: string[]) => {
@@ -202,6 +207,11 @@ export default function HomeScreen() {
   }, [accounts, handleSyncAccount]);
 
   const handleSyncWithCustomRange = useCallback(async (accountId: string) => {
+    // Validación: fecha desde no puede ser posterior a fecha hasta
+    if (syncFromDate > syncToDate) {
+      Alert.alert('Rango inválido', 'La fecha "Desde" no puede ser posterior a la fecha "Hasta". Corrige el rango e intenta de nuevo.');
+      return;
+    }
     setSyncRangeModal(null);
     const acc = accounts.find(a => a.id === accountId);
     if (!acc) return;
@@ -219,10 +229,11 @@ export default function HomeScreen() {
       .filter(([, enabled]) => enabled)
       .flatMap(([key]) => extMap[key] ?? []);
 
-    // Update the sync-from date for this account
+    // Usar syncFromDate como referencia temporal para este sync,
+    // pero NO resetear lastSyncAt — eso causaría re-escaneo completo en próximos syncs automáticos.
     const { upsertAccount } = await import('../database/accounts');
-    const freshAccount = { ...acc, syncFromDate: newFromDate, lastSyncAt: null };
-    updateAccount(accountId, { syncFromDate: newFromDate, lastSyncAt: null });
+    const freshAccount = { ...acc, syncFromDate: newFromDate };
+    updateAccount(accountId, { syncFromDate: newFromDate });
     await upsertAccount(freshAccount);
 
     // Pass syncToDate and extensions as temporary params — global settings stay unchanged
@@ -265,6 +276,74 @@ export default function HomeScreen() {
             <Ionicons name="settings-outline" size={24} color={Colors.textSecondary} />
           </TouchableOpacity>
         </View>
+
+        {/* Account Picker — estilo Gmail */}
+        {accounts.length > 0 && (
+          <FadeInUpView delay={50}>
+            <View style={[styles.accountPickerRow]}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {/* "Todas" option */}
+                <TouchableOpacity
+                  style={[
+                    styles.accountPickerChip,
+                    {
+                      backgroundColor: activeAccountId === null ? theme.primary : theme.surface,
+                      borderColor: activeAccountId === null ? theme.primary : theme.border,
+                    },
+                  ]}
+                  onPress={() => { setActiveAccountId(null); }}
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons
+                    name="account-group-outline"
+                    size={16}
+                    color={activeAccountId === null ? '#fff' : theme.textMuted}
+                  />
+                  <Text
+                    style={[
+                      styles.accountPickerLabel,
+                      { color: activeAccountId === null ? '#fff' : theme.textSecondary },
+                    ]}
+                  >
+                    Todas
+                  </Text>
+                </TouchableOpacity>
+
+                {accounts.map((acc) => {
+                  const isActive = activeAccountId === acc.id;
+                  return (
+                    <TouchableOpacity
+                      key={acc.id}
+                      style={[
+                        styles.accountPickerChip,
+                        {
+                          backgroundColor: isActive ? theme.primary : theme.surface,
+                          borderColor: isActive ? theme.primary : theme.border,
+                        },
+                      ]}
+                      onPress={() => { setActiveAccountId(acc.id); }}
+                      activeOpacity={0.8}
+                    >
+                      <Avatar name={acc.displayName} url={acc.avatarUrl} size={20} />
+                      <Text
+                        style={[
+                          styles.accountPickerLabel,
+                          { color: isActive ? '#fff' : theme.textSecondary },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {acc.email.split('@')[0]}
+                      </Text>
+                      {isActive && (
+                        <MaterialCommunityIcons name="check-circle" size={14} color="#fff" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </FadeInUpView>
+        )}
 
         {/* Stats Row */}
         <FadeInUpView delay={100} style={[styles.statsRow, { backgroundColor: theme.surface }]}>
@@ -457,11 +536,16 @@ export default function HomeScreen() {
 
             {/* Custom date range */}
             <Text style={[styles.syncSectionLabel, { color: theme.textSecondary }]}>RANGO PERSONALIZADO</Text>
-            <View style={[styles.syncDateRow, { borderColor: theme.border }]}>
+            {syncFromDate > syncToDate && (
+              <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '600', marginBottom: 4 }}>
+                La fecha "Desde" no puede ser posterior a "Hasta"
+              </Text>
+            )}
+            <View style={[styles.syncDateRow, { borderColor: syncFromDate > syncToDate ? '#EF4444' : theme.border }]}>
               <TouchableOpacity style={styles.syncDateField} onPress={() => setShowFromPicker(true)}>
-                <MaterialCommunityIcons name="calendar-start" size={16} color={theme.primary} />
+                <MaterialCommunityIcons name="calendar-start" size={16} color={syncFromDate > syncToDate ? '#EF4444' : theme.primary} />
                 <Text style={[styles.syncDateLabel, { color: theme.textSecondary }]}>Desde</Text>
-                <Text style={[styles.syncDateValue, { color: theme.textPrimary }]}>{format(syncFromDate, 'dd/MM/yyyy')}</Text>
+                <Text style={[styles.syncDateValue, { color: syncFromDate > syncToDate ? '#EF4444' : theme.textPrimary }]}>{format(syncFromDate, 'dd/MM/yyyy')}</Text>
               </TouchableOpacity>
               <View style={[styles.syncDateDivider, { backgroundColor: theme.border }]} />
               <TouchableOpacity style={styles.syncDateField} onPress={() => setShowToPicker(true)}>
@@ -923,6 +1007,23 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  accountPickerRow: {
+    marginBottom: Spacing.md,
+  },
+  accountPickerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+  },
+  accountPickerLabel: {
+    ...Typography.caption,
+    fontWeight: '600',
+    maxWidth: 120,
   },
   // Sync modal redesign
   syncModalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },

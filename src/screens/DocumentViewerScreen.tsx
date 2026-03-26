@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -33,6 +33,7 @@ export default function DocumentViewerScreen() {
   const route = useRoute<any>();
   const { filePath, filename, mimeType, fileExtension } = route.params as ViewerParams;
   const theme = useTheme();
+  const pdfWebViewRef = useRef<any>(null);
 
   const [webLoading, setWebLoading] = useState(true);
   const [webError, setWebError] = useState(false);
@@ -114,8 +115,11 @@ export default function DocumentViewerScreen() {
     prepare();
   }, [filePath, isPdf, isDocx, isXlsx]);
 
+  // HTML shell for PDF viewer — does NOT contain base64Data inline.
+  // The data is injected via postMessage after the WebView loads,
+  // preventing JS engine crashes with large PDFs.
   const pdfJsHtml = useMemo(() => {
-    if (!base64Data || !pdfJsB64 || !workerB64) return '';
+    if (!pdfJsB64 || !workerB64) return '';
     return `<!DOCTYPE html>
 <html>
 <head>
@@ -130,56 +134,70 @@ canvas { display: block; margin: 0 auto 10px auto; border-radius: 6px; box-shado
 </style>
 </head>
 <body>
-<div id="loading">⏳ Cargando PDF...</div>
+<div id="loading">Cargando PDF...</div>
 <div id="error" style="display:none"></div>
 <div id="container"></div>
 <script src="data:text/javascript;base64,${pdfJsB64}"></script>
 <script>
-(function() {
-  var workerCode = atob('${workerB64}');
-  var workerBlob = new Blob([workerCode], { type: 'text/javascript' });
-  pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
-  var b64 = '${base64Data}';
-  var binary = atob(b64);
-  var bytes = new Uint8Array(binary.length);
-  for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
-    document.getElementById('loading').style.display = 'none';
-    var container = document.getElementById('container');
-    var pageCount = document.createElement('div');
-    pageCount.id = 'pageCount';
-    pageCount.textContent = pdf.numPages + ' p\u00e1gina' + (pdf.numPages !== 1 ? 's' : '');
-    container.before(pageCount);
-    var promises = [];
-    for (var p = 1; p <= pdf.numPages; p++) {
-      (function(pageNum) {
-        promises.push(pdf.getPage(pageNum).then(function(page) {
-          var vp = page.getViewport({ scale: window.devicePixelRatio * 1.8 });
+var workerCode = atob('${workerB64}');
+var workerBlob = new Blob([workerCode], { type: 'text/javascript' });
+pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
+
+// Receive PDF data via postMessage (avoids embedding megabytes in HTML literal)
+document.addEventListener('message', handleMsg);
+window.addEventListener('message', handleMsg);
+function handleMsg(e) {
+  var b64 = typeof e.data === 'string' ? e.data : '';
+  if (!b64 || b64.length < 20) return;
+  document.removeEventListener('message', handleMsg);
+  window.removeEventListener('message', handleMsg);
+  try {
+    var binary = atob(b64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    pdfjsLib.getDocument({ data: bytes }).promise.then(function(pdf) {
+      document.getElementById('loading').style.display = 'none';
+      var container = document.getElementById('container');
+      var pageCount = document.createElement('div');
+      pageCount.id = 'pageCount';
+      pageCount.textContent = pdf.numPages + ' p\\u00e1gina' + (pdf.numPages !== 1 ? 's' : '');
+      container.before(pageCount);
+      // Render pages sequentially to avoid memory spikes
+      var renderNext = function(pageNum) {
+        if (pageNum > pdf.numPages) return;
+        pdf.getPage(pageNum).then(function(page) {
+          var scale = Math.min(window.devicePixelRatio * 1.5, 2.5);
+          var vp = page.getViewport({ scale: scale });
           var canvas = document.createElement('canvas');
           var ctx = canvas.getContext('2d');
           canvas.width = vp.width;
           canvas.height = vp.height;
-          return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function() {
-            return { page: pageNum, canvas: canvas };
+          page.render({ canvasContext: ctx, viewport: vp }).promise.then(function() {
+            container.appendChild(canvas);
+            renderNext(pageNum + 1);
           });
-        }));
-      })(p);
-    }
-    Promise.all(promises).then(function(results) {
-      results.sort(function(a, b) { return a.page - b.page; });
-      results.forEach(function(r) { container.appendChild(r.canvas); });
+        });
+      };
+      renderNext(1);
+    }).catch(function(err) {
+      document.getElementById('loading').style.display = 'none';
+      var errDiv = document.getElementById('error');
+      errDiv.style.display = 'block';
+      errDiv.textContent = 'Error al renderizar: ' + err.message;
     });
-  }).catch(function(err) {
+  } catch(err) {
     document.getElementById('loading').style.display = 'none';
     var errDiv = document.getElementById('error');
     errDiv.style.display = 'block';
-    errDiv.textContent = 'Error al renderizar: ' + err.message;
-  });
-})();
+    errDiv.textContent = 'Error: ' + err.message;
+  }
+}
+// Signal that we're ready to receive data
+window.ReactNativeWebView && window.ReactNativeWebView.postMessage('READY');
 </script>
 </body>
 </html>`;
-  }, [base64Data, pdfJsB64, workerB64]);
+  }, [pdfJsB64, workerB64]);
 
   const mammothHtml = useMemo(() => {
     if (!base64Data || !isDocx || !mammothB64) return '';
@@ -392,6 +410,13 @@ try {
             style={{ flex: 1 }}
             onLoadEnd={() => setWebLoading(false)}
             onError={() => { setWebLoading(false); setWebError(true); }}
+            onMessage={(event) => {
+              // WebView signals READY — inject the PDF base64 data via postMessage
+              if (event.nativeEvent.data === 'READY' && base64Data) {
+                pdfWebViewRef.current?.postMessage(base64Data);
+              }
+            }}
+            ref={pdfWebViewRef}
             originWhitelist={['*']}
             allowFileAccess
             javaScriptEnabled

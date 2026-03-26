@@ -169,13 +169,18 @@ export async function syncGmailAccount(
     },
   );
 
+  // Gmail's "after:" works at DAY granularity (YYYY/MM/DD), NOT exact timestamps.
+  // Using epoch seconds causes Gmail to re-scan the same day's emails on every sync.
+  // Fix: use YYYY/MM/DD format and start from the day AFTER last sync to avoid duplicates.
   const sinceDate = account.lastSyncAt
     ? new Date(account.lastSyncAt)
     : new Date(account.syncFromDate);
 
-  const afterQuery = toDate
-    ? `after:${Math.floor(sinceDate.getTime() / 1000)} before:${Math.floor(toDate.getTime() / 1000)} has:attachment`
-    : `after:${Math.floor(sinceDate.getTime() / 1000)} has:attachment`;
+  // Format as YYYY/MM/DD for Gmail query (their documented format)
+  const fmtDate = (d: Date) => `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+  const afterStr = fmtDate(sinceDate);
+  const beforeStr = toDate ? ` before:${fmtDate(toDate)}` : '';
+  const afterQuery = `after:${afterStr}${beforeStr} has:attachment`;
 
   let pageToken: string | undefined;
   let downloaded = 0;
