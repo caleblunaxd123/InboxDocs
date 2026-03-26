@@ -32,7 +32,7 @@ import { getFilteredDocumentsPage, deleteDocument, getAllFilteredDocuments } fro
 import { formatBytes } from '../utils/format';
 import { CategoryLabels } from '../utils/theme';
 import { getFileTypeUI } from '../utils/fileTypes';
-import { exportDocumentsCsv } from '../utils/exportCsv';
+import { exportDocumentsExcel } from '../utils/exportExcel';
 
 const PAGE_SIZE = 20;
 
@@ -240,7 +240,7 @@ export default function RepositoryScreen() {
     if (selected.length === 0) return;
     setExportingCsv(true);
     try {
-      await exportDocumentsCsv(selected, 'seleccionados_inboxdocs');
+      await exportDocumentsExcel(selected, 'seleccionados_inboxdocs');
     } catch (e: any) {
       Alert.alert('Error', 'No se pudo exportar: ' + (e?.message ?? ''));
     } finally {
@@ -258,7 +258,7 @@ export default function RepositoryScreen() {
         Alert.alert('Sin documentos', 'No hay documentos que exportar con los filtros actuales.');
         return;
       }
-      await exportDocumentsCsv(allDocs);
+      await exportDocumentsExcel(allDocs);
     } catch (e: any) {
       Alert.alert('Error', 'No se pudo exportar: ' + (e?.message ?? ''));
     } finally {

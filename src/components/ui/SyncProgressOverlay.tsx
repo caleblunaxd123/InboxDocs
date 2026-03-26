@@ -104,7 +104,7 @@ export const SyncProgressOverlay: React.FC<Props> = ({
 
           {/* Stats */}
           <View style={styles.statsRow}>
-            <StatChip icon="email-scan-outline" label="Correos" value={emailsScanned} />
+            <StatChip icon="email-search-outline" label="Correos" value={emailsScanned} />
             <StatChip icon="file-find-outline" label="Encontrados" value={documentsFound} />
             <StatChip icon="download-outline" label="Descargados" value={documentsDownloaded} color={Colors.success} />
           </View>

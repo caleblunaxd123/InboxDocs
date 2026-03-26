@@ -31,7 +31,7 @@ import {
   InvoiceMonthlySummary,
   InvoiceIssuerSummary,
 } from '../database/invoices';
-import { exportDocumentsCsv } from '../utils/exportCsv';
+import { exportDocumentsExcel } from '../utils/exportExcel';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CHART_WIDTH = SCREEN_WIDTH - 32;
@@ -152,7 +152,7 @@ export default function InsightsScreen() {
         Alert.alert('Sin documentos', 'No hay documentos para exportar.');
         return;
       }
-      await exportDocumentsCsv(docs);
+      await exportDocumentsExcel(docs);
     } catch (e: any) {
       Alert.alert('Error al exportar', e?.message ?? 'Ocurrió un error inesperado.');
     } finally {

@@ -11,6 +11,7 @@ import {
   Animated,
   Easing,
   Modal,
+  TextInput,
 } from 'react-native';
 import { Account, Document } from '../types';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -201,8 +202,8 @@ export default function HomeScreen() {
     if (settings) updateSetting('allowed_extensions', allowedExts as any);
 
     const { upsertAccount } = await import('../database/accounts');
-    const freshAccount = { ...acc, syncFromDate: newFromDate, lastSyncAt: null };
-    updateAccount(accountId, { syncFromDate: newFromDate, lastSyncAt: null });
+    const freshAccount = { ...acc, syncFromDate: newFromDate };
+    updateAccount(accountId, { syncFromDate: newFromDate });
     await upsertAccount(freshAccount);
 
     await handleSyncAccount(accountId, freshAccount);
@@ -580,19 +581,32 @@ export default function HomeScreen() {
           <View style={styles.datePickerOverlay}>
             <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
               <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha desde</Text>
-              {/* Date display */}
+              {/* Editable date inputs */}
               <View style={styles.datePickerManual}>
-                {['Año', 'Mes', 'Día'].map((label, idx) => {
-                  const parts = [syncFromDate.getFullYear(), syncFromDate.getMonth() + 1, syncFromDate.getDate()];
-                  return (
-                    <View key={label} style={styles.datePartCol}>
-                      <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{label}</Text>
-                      <Text style={[styles.datePartValue, { color: theme.textPrimary, borderColor: theme.border }]}>
-                        {String(parts[idx]).padStart(2, '0')}
-                      </Text>
-                    </View>
-                  );
-                })}
+                {[
+                  { label: 'Día', value: syncFromDate.getDate(), min: 1, max: 31 },
+                  { label: 'Mes', value: syncFromDate.getMonth() + 1, min: 1, max: 12 },
+                  { label: 'Año', value: syncFromDate.getFullYear(), min: 2020, max: new Date().getFullYear() },
+                ].map((field) => (
+                  <View key={field.label} style={styles.datePartCol}>
+                    <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{field.label}</Text>
+                    <TextInput
+                      style={[styles.datePartInput, { color: theme.textPrimary, borderColor: theme.primary }]}
+                      keyboardType="number-pad"
+                      maxLength={field.label === 'Año' ? 4 : 2}
+                      defaultValue={String(field.value)}
+                      onEndEditing={(e) => {
+                        const num = parseInt(e.nativeEvent.text, 10);
+                        if (isNaN(num) || num < field.min || num > field.max) return;
+                        const d = new Date(syncFromDate);
+                        if (field.label === 'Día') d.setDate(num);
+                        else if (field.label === 'Mes') d.setMonth(num - 1);
+                        else d.setFullYear(num);
+                        if (!isNaN(d.getTime())) setSyncFromDate(d);
+                      }}
+                    />
+                  </View>
+                ))}
               </View>
               {/* Quick buttons */}
               <View style={styles.datePickerPresets}>
@@ -628,6 +642,33 @@ export default function HomeScreen() {
           <View style={styles.datePickerOverlay}>
             <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
               <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha hasta</Text>
+              {/* Editable date inputs */}
+              <View style={styles.datePickerManual}>
+                {[
+                  { label: 'Día', value: syncToDate.getDate(), min: 1, max: 31 },
+                  { label: 'Mes', value: syncToDate.getMonth() + 1, min: 1, max: 12 },
+                  { label: 'Año', value: syncToDate.getFullYear(), min: 2020, max: new Date().getFullYear() },
+                ].map((field) => (
+                  <View key={field.label} style={styles.datePartCol}>
+                    <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{field.label}</Text>
+                    <TextInput
+                      style={[styles.datePartInput, { color: theme.textPrimary, borderColor: theme.primary }]}
+                      keyboardType="number-pad"
+                      maxLength={field.label === 'Año' ? 4 : 2}
+                      defaultValue={String(field.value)}
+                      onEndEditing={(e) => {
+                        const num = parseInt(e.nativeEvent.text, 10);
+                        if (isNaN(num) || num < field.min || num > field.max) return;
+                        const d = new Date(syncToDate);
+                        if (field.label === 'Día') d.setDate(num);
+                        else if (field.label === 'Mes') d.setMonth(num - 1);
+                        else d.setFullYear(num);
+                        if (!isNaN(d.getTime())) setSyncToDate(d);
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
               <View style={styles.datePickerPresets}>
                 {[
                   { label: 'Hoy', days: 0 },
@@ -930,6 +971,7 @@ const styles = StyleSheet.create({
   datePartCol: { alignItems: 'center', gap: 4 },
   datePartLabel: { ...Typography.caption },
   datePartValue: { ...Typography.headingM, fontWeight: '700', borderBottomWidth: 2, paddingBottom: 4, minWidth: 50, textAlign: 'center' },
+  datePartInput: { ...Typography.headingM, fontWeight: '700', borderBottomWidth: 2, paddingBottom: 4, minWidth: 50, textAlign: 'center' },
   datePickerPresets: { gap: 8 },
   datePresetBtn: { borderWidth: 1, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
   datePresetText: { ...Typography.bodyM },
