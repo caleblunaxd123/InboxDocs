@@ -242,8 +242,15 @@ export async function getAllFilteredDocuments(filters: DocumentFilters): Promise
   return getFilteredDocuments(filters);
 }
 
-export async function getRecentDocuments(limit = 10): Promise<Document[]> {
+export async function getRecentDocuments(limit = 10, accountId?: string | null): Promise<Document[]> {
   const db = await getDatabase();
+  if (accountId) {
+    const rows = await db.getAllAsync(
+      'SELECT * FROM documents WHERE account_id = ? ORDER BY downloaded_at DESC LIMIT ?',
+      [accountId, limit]
+    );
+    return rows.map(rowToDocument);
+  }
   const rows = await db.getAllAsync(
     'SELECT * FROM documents ORDER BY downloaded_at DESC LIMIT ?',
     [limit]
@@ -251,8 +258,15 @@ export async function getRecentDocuments(limit = 10): Promise<Document[]> {
   return rows.map(rowToDocument);
 }
 
-export async function getStarredDocuments(limit = 20): Promise<Document[]> {
+export async function getStarredDocuments(limit = 20, accountId?: string | null): Promise<Document[]> {
   const db = await getDatabase();
+  if (accountId) {
+    const rows = await db.getAllAsync(
+      'SELECT * FROM documents WHERE is_starred = 1 AND account_id = ? ORDER BY downloaded_at DESC LIMIT ?',
+      [accountId, limit]
+    );
+    return rows.map(rowToDocument);
+  }
   const rows = await db.getAllAsync(
     'SELECT * FROM documents WHERE is_starred = 1 ORDER BY downloaded_at DESC LIMIT ?',
     [limit]
@@ -260,8 +274,15 @@ export async function getStarredDocuments(limit = 20): Promise<Document[]> {
   return rows.map(rowToDocument);
 }
 
-export async function getDocumentStats(): Promise<{ total: number; totalSize: number }> {
+export async function getDocumentStats(accountId?: string | null): Promise<{ total: number; totalSize: number }> {
   const db = await getDatabase();
+  if (accountId) {
+    const row: any = await db.getFirstAsync(
+      'SELECT COUNT(*) as total, COALESCE(SUM(file_size), 0) as total_size FROM documents WHERE account_id = ?',
+      [accountId]
+    );
+    return { total: row?.total ?? 0, totalSize: row?.total_size ?? 0 };
+  }
   const row: any = await db.getFirstAsync(
     'SELECT COUNT(*) as total, COALESCE(SUM(file_size), 0) as total_size FROM documents'
   );

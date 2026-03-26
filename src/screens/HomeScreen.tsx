@@ -54,6 +54,7 @@ export default function HomeScreen() {
     updateSetting,
   } = useAppStore();
 
+  const [activeAccountId, setActiveAccountId] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
   const [syncRangeModal, setSyncRangeModal] = React.useState<string | null>(null);
   const [syncFromDate, setSyncFromDate] = React.useState<Date>(subDays(new Date(), 30));
@@ -70,18 +71,18 @@ export default function HomeScreen() {
 
   const loadData = useCallback(async () => {
     const [recent, starred, stats] = await Promise.all([
-      getRecentDocuments(10),
-      getStarredDocuments(20),
-      getDocumentStats(),
+      getRecentDocuments(10, activeAccountId),
+      getStarredDocuments(20, activeAccountId),
+      getDocumentStats(activeAccountId),
     ]);
     setRecentDocuments(recent);
     setStarredDocuments(starred);
     setStats(stats.total, stats.totalSize);
-  }, []);
+  }, [activeAccountId]);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   const handleSyncAccount = useCallback(
     async (accountId: string, accountOverride?: Account) => {
@@ -242,6 +243,75 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Account Picker — shows which profile is active */}
+        {accounts.length > 0 && (
+          <FadeInUpView delay={80}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountPickerScroll}>
+              {/* "All" chip */}
+              <TouchableOpacity
+                style={[
+                  styles.accountPickerChip,
+                  {
+                    backgroundColor: activeAccountId === null ? theme.primary : theme.surface,
+                    borderColor: activeAccountId === null ? theme.primary : theme.border,
+                  },
+                ]}
+                onPress={() => setActiveAccountId(null)}
+              >
+                <MaterialCommunityIcons
+                  name="account-group"
+                  size={16}
+                  color={activeAccountId === null ? '#FFF' : theme.textMuted}
+                />
+                <Text
+                  style={[
+                    styles.accountPickerLabel,
+                    { color: activeAccountId === null ? '#FFF' : theme.textSecondary },
+                  ]}
+                >
+                  Todas
+                </Text>
+                {activeAccountId === null && (
+                  <MaterialCommunityIcons name="check-circle" size={14} color="#FFF" />
+                )}
+              </TouchableOpacity>
+
+              {accounts.map((acc) => {
+                const isActive = activeAccountId === acc.id;
+                const providerIcon = acc.provider === 'gmail' ? 'gmail' : 'microsoft-outlook';
+                const providerColor = acc.provider === 'gmail' ? '#EA4335' : '#0078D4';
+                return (
+                  <TouchableOpacity
+                    key={acc.id}
+                    style={[
+                      styles.accountPickerChip,
+                      {
+                        backgroundColor: isActive ? providerColor + '18' : theme.surface,
+                        borderColor: isActive ? providerColor : theme.border,
+                      },
+                    ]}
+                    onPress={() => setActiveAccountId(acc.id)}
+                  >
+                    <MaterialCommunityIcons name={providerIcon as any} size={16} color={providerColor} />
+                    <Text
+                      style={[
+                        styles.accountPickerLabel,
+                        { color: isActive ? providerColor : theme.textSecondary },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {acc.email.split('@')[0]}
+                    </Text>
+                    {isActive && (
+                      <MaterialCommunityIcons name="check-circle" size={14} color={providerColor} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </FadeInUpView>
+        )}
+
         {/* Stats Row */}
         <FadeInUpView delay={100} style={[styles.statsRow, { backgroundColor: theme.surface }]}>
           <StatItem icon="file-multiple-outline" label="Documentos" value={String(totalDocuments)} />
@@ -278,9 +348,14 @@ export default function HomeScreen() {
         
         {accounts.map((account, index) => {
           const state = syncState[account.id];
+          const isSelected = activeAccountId === account.id;
+          const providerColor = account.provider === 'gmail' ? '#EA4335' : '#0078D4';
           return (
             <FadeInUpView delay={250 + index * 50} key={account.id}>
-              <Card style={styles.accountCard}>
+              <Card style={isSelected
+                ? [styles.accountCard, { borderWidth: 2, borderColor: providerColor }] as any
+                : styles.accountCard
+              }>
               <View style={styles.accountRow}>
                 <Avatar name={account.displayName} url={account.avatarUrl} size={44} />
                 <View style={styles.accountInfo}>
@@ -798,6 +873,23 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Account picker
+  accountPickerScroll: { marginBottom: Spacing.lg, marginHorizontal: -Spacing.xl, paddingHorizontal: Spacing.xl },
+  accountPickerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.pill,
+    borderWidth: 1.5,
+    marginRight: Spacing.sm,
+  },
+  accountPickerLabel: {
+    ...Typography.caption,
+    fontWeight: '600',
+    maxWidth: 120,
   },
   // Sync modal redesign
   syncModalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
