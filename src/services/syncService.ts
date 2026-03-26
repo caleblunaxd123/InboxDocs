@@ -101,10 +101,28 @@ async function ensureDir() {
 }
 
 /**
+ * Ensures the account token is still valid; refreshes it if expired.
+ * Returns the (possibly updated) account object.
+ */
+export async function ensureFreshToken(account: Account): Promise<Account> {
+  if (account.tokenExpiresAt && account.tokenExpiresAt > Date.now() + 60_000) {
+    return account; // still valid (with 1-min buffer)
+  }
+
+  const { refreshGoogleToken, refreshMicrosoftToken } = await import('./authService');
+  const refreshFn = account.provider === 'gmail' ? refreshGoogleToken : refreshMicrosoftToken;
+  const { accessToken, expiresAt } = await refreshFn(account.refreshTokenEncrypted);
+
+  await updateAccountTokens(account.id, accessToken, account.refreshTokenEncrypted, expiresAt);
+
+  return { ...account, accessTokenEncrypted: accessToken, tokenExpiresAt: expiresAt };
+}
+
+/**
  * Recursively collects attachment parts from a Gmail message payload.
  * Defined at module level — not inside the message loop.
  */
-function collectParts(payload: any): any[] {
+export function collectParts(payload: any): any[] {
   if (!payload) return [];
   const result: any[] = [];
   if (payload.filename && payload.body?.attachmentId) {

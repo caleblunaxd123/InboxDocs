@@ -1,5 +1,4 @@
 import React, { useEffect, useCallback } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -14,7 +13,6 @@ import {
   Modal,
 } from 'react-native';
 import { Account, Document } from '../types';
-import { SyncProgress } from '../services/syncService';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -31,7 +29,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { updateAccountTokens } from '../database/accounts';
 import { getRecentDocuments, getDocumentStats, getStarredDocuments } from '../database/documents';
 import { signInWithGoogle, signInWithMicrosoft } from '../services/authService';
-import { syncGmailAccount, syncOutlookAccount, cancelSync } from '../services/syncService';
+import { syncGmailAccount, syncOutlookAccount } from '../services/syncService';
 import { scheduleNewDocumentsNotification } from '../services/notificationService';
 import { formatBytes } from '../utils/format';
 import { getFileTypeUI } from '../utils/fileTypes';
@@ -42,8 +40,6 @@ export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const {
     accounts,
-    activeAccountId,
-    setActiveAccountId,
     recentDocuments,
     starredDocuments,
     totalDocuments,
@@ -55,8 +51,10 @@ export default function HomeScreen() {
     setStats,
     settings,
     updateAccount,
+    updateSetting,
   } = useAppStore();
 
+  const [activeAccountId, setActiveAccountId] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
   const [syncRangeModal, setSyncRangeModal] = React.useState<string | null>(null);
   const [syncFromDate, setSyncFromDate] = React.useState<Date>(subDays(new Date(), 30));
@@ -72,30 +70,22 @@ export default function HomeScreen() {
   });
 
   const loadData = useCallback(async () => {
-    const acctId = useAppStore.getState().activeAccountId ?? undefined;
     const [recent, starred, stats] = await Promise.all([
-      getRecentDocuments(10, acctId),
-      getStarredDocuments(20, acctId),
-      getDocumentStats(acctId),
+      getRecentDocuments(10, activeAccountId),
+      getStarredDocuments(20, activeAccountId),
+      getDocumentStats(activeAccountId),
     ]);
     setRecentDocuments(recent);
     setStarredDocuments(starred);
     setStats(stats.total, stats.totalSize);
   }, [activeAccountId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [loadData])
-  );
-
-  // Recargar datos cuando cambie la cuenta seleccionada
   useEffect(() => {
     loadData();
-  }, [activeAccountId]);
+  }, [loadData]);
 
   const handleSyncAccount = useCallback(
-    async (accountId: string, accountOverride?: Account, syncToDateOverride?: Date, allowedExtensionsOverride?: string[]) => {
+    async (accountId: string, accountOverride?: Account) => {
       // Guard: prevent double sync
       if (useAppStore.getState().syncState[accountId]?.isSyncing) return;
 
@@ -108,45 +98,35 @@ export default function HomeScreen() {
         progress: 'Iniciando sincronización...',
         emailsScanned: 0,
         documentsFound: 0,
-        documentsDownloaded: 0,
       });
-
-      let lastProgress: SyncProgress | null = null;
 
       try {
         const syncFn = account.provider === 'gmail' ? syncGmailAccount : syncOutlookAccount;
         const downloaded = await syncFn(account, (p) => {
-          lastProgress = p;
           setSyncState(accountId, {
             progress: p.currentAction,
             emailsScanned: p.emailsScanned,
             documentsFound: p.documentsFound,
-            documentsDownloaded: p.documentsDownloaded,
           });
-        }, syncToDateOverride, allowedExtensionsOverride);
+        });
 
         setSyncState(accountId, { isSyncing: false, lastSyncAt: Date.now() });
         updateAccount(accountId, { lastSyncAt: Date.now() });
         await loadData();
 
-        const skippedCount = (lastProgress as SyncProgress | null)?.skippedCount ?? 0;
-        let message = downloaded > 0
-          ? `Se descargaron ${downloaded} documento(s) nuevo(s).`
-          : 'No se encontraron documentos nuevos.';
-        if (skippedCount > 0) {
-          message += `\n${skippedCount} adjunto(s) omitido(s) por filtros.`;
-        }
-
-        Alert.alert('Sincronización completada', message);
+        Alert.alert(
+          'Sincronización completada',
+          downloaded > 0
+            ? `Se descargaron ${downloaded} documento(s) nuevo(s).`
+            : 'No se encontraron documentos nuevos.'
+        );
 
         if (downloaded > 0) {
           await scheduleNewDocumentsNotification(downloaded);
         }
       } catch (err: any) {
         setSyncState(accountId, { isSyncing: false });
-        if (err.code === 'SYNC_CANCELLED') {
-          // El usuario canceló intencionalmente — sin alerta
-        } else if (err.code === 'SESSION_EXPIRED') {
+        if (err.code === 'SESSION_EXPIRED') {
           Alert.alert(
             'Sesión expirada',
             err.message,
@@ -162,15 +142,6 @@ export default function HomeScreen() {
     },
     [accounts, loadData]
   );
-
-  // Cancela todos los syncs en curso
-  const handleCancelSync = useCallback(() => {
-    accounts.forEach((a) => {
-      if (syncState[a.id]?.isSyncing) {
-        cancelSync(a.id);
-      }
-    });
-  }, [accounts, syncState]);
 
   const handleReconnectAccount = useCallback(async (accountId: string) => {
     const account = accounts.find((a) => a.id === accountId);
@@ -207,38 +178,35 @@ export default function HomeScreen() {
   }, [accounts, handleSyncAccount]);
 
   const handleSyncWithCustomRange = useCallback(async (accountId: string) => {
-    // Validación: fecha desde no puede ser posterior a fecha hasta
-    if (syncFromDate > syncToDate) {
-      Alert.alert('Rango inválido', 'La fecha "Desde" no puede ser posterior a la fecha "Hasta". Corrige el rango e intenta de nuevo.');
-      return;
-    }
     setSyncRangeModal(null);
     const acc = accounts.find(a => a.id === accountId);
     if (!acc) return;
 
     const newFromDate = format(syncFromDate, 'yyyy-MM-dd');
-    // Build allowed extensions from syncFileTypes — temporary, per-sync only (NOT saved globally)
+    // Build allowed extensions from syncFileTypes
     const extMap: Record<string, string[]> = {
       pdf: ['pdf'],
       images: ['jpg', 'jpeg', 'png', 'heic', 'webp'],
-      word: ['doc', 'docx'],
-      excel: ['xls', 'xlsx'],
-      xml: ['xml', 'txt', 'csv'],
+      word: ['docx'],
+      excel: ['xlsx'],
+      xml: ['xml', 'txt'],
     };
     const allowedExts = Object.entries(syncFileTypes)
       .filter(([, enabled]) => enabled)
       .flatMap(([key]) => extMap[key] ?? []);
 
-    // Usar syncFromDate como referencia temporal para este sync,
-    // pero NO resetear lastSyncAt — eso causaría re-escaneo completo en próximos syncs automáticos.
+    // Persist the updated extension list and sync-from date
+    const { setSetting } = await import('../database/settings');
+    await setSetting('allowed_extensions', JSON.stringify(allowedExts));
+    if (settings) updateSetting('allowed_extensions', allowedExts as any);
+
     const { upsertAccount } = await import('../database/accounts');
-    const freshAccount = { ...acc, syncFromDate: newFromDate };
-    updateAccount(accountId, { syncFromDate: newFromDate });
+    const freshAccount = { ...acc, syncFromDate: newFromDate, lastSyncAt: null };
+    updateAccount(accountId, { syncFromDate: newFromDate, lastSyncAt: null });
     await upsertAccount(freshAccount);
 
-    // Pass syncToDate and extensions as temporary params — global settings stay unchanged
-    await handleSyncAccount(accountId, freshAccount, syncToDate, allowedExts);
-  }, [accounts, syncFromDate, syncToDate, syncFileTypes, handleSyncAccount, updateAccount]);
+    await handleSyncAccount(accountId, freshAccount);
+  }, [accounts, syncFromDate, syncFileTypes, handleSyncAccount, updateAccount, settings]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -256,8 +224,6 @@ export default function HomeScreen() {
         progress={syncingAccountState?.progress ?? ''}
         emailsScanned={syncingAccountState?.emailsScanned ?? 0}
         documentsFound={syncingAccountState?.documentsFound ?? 0}
-        documentsDownloaded={syncingAccountState?.documentsDownloaded ?? 0}
-        onCancel={handleCancelSync}
       />
       <ScrollView
         style={styles.container}
@@ -277,71 +243,72 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Account Picker — estilo Gmail */}
+        {/* Account Picker — shows which profile is active */}
         {accounts.length > 0 && (
-          <FadeInUpView delay={50}>
-            <View style={[styles.accountPickerRow]}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                {/* "Todas" option */}
-                <TouchableOpacity
+          <FadeInUpView delay={80}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountPickerScroll}>
+              {/* "All" chip */}
+              <TouchableOpacity
+                style={[
+                  styles.accountPickerChip,
+                  {
+                    backgroundColor: activeAccountId === null ? theme.primary : theme.surface,
+                    borderColor: activeAccountId === null ? theme.primary : theme.border,
+                  },
+                ]}
+                onPress={() => setActiveAccountId(null)}
+              >
+                <MaterialCommunityIcons
+                  name="account-group"
+                  size={16}
+                  color={activeAccountId === null ? '#FFF' : theme.textMuted}
+                />
+                <Text
                   style={[
-                    styles.accountPickerChip,
-                    {
-                      backgroundColor: activeAccountId === null ? theme.primary : theme.surface,
-                      borderColor: activeAccountId === null ? theme.primary : theme.border,
-                    },
+                    styles.accountPickerLabel,
+                    { color: activeAccountId === null ? '#FFF' : theme.textSecondary },
                   ]}
-                  onPress={() => { setActiveAccountId(null); }}
-                  activeOpacity={0.8}
                 >
-                  <MaterialCommunityIcons
-                    name="account-group-outline"
-                    size={16}
-                    color={activeAccountId === null ? '#fff' : theme.textMuted}
-                  />
-                  <Text
-                    style={[
-                      styles.accountPickerLabel,
-                      { color: activeAccountId === null ? '#fff' : theme.textSecondary },
-                    ]}
-                  >
-                    Todas
-                  </Text>
-                </TouchableOpacity>
+                  Todas
+                </Text>
+                {activeAccountId === null && (
+                  <MaterialCommunityIcons name="check-circle" size={14} color="#FFF" />
+                )}
+              </TouchableOpacity>
 
-                {accounts.map((acc) => {
-                  const isActive = activeAccountId === acc.id;
-                  return (
-                    <TouchableOpacity
-                      key={acc.id}
+              {accounts.map((acc) => {
+                const isActive = activeAccountId === acc.id;
+                const providerIcon = acc.provider === 'gmail' ? 'gmail' : 'microsoft-outlook';
+                const providerColor = acc.provider === 'gmail' ? '#EA4335' : '#0078D4';
+                return (
+                  <TouchableOpacity
+                    key={acc.id}
+                    style={[
+                      styles.accountPickerChip,
+                      {
+                        backgroundColor: isActive ? providerColor + '18' : theme.surface,
+                        borderColor: isActive ? providerColor : theme.border,
+                      },
+                    ]}
+                    onPress={() => setActiveAccountId(acc.id)}
+                  >
+                    <MaterialCommunityIcons name={providerIcon as any} size={16} color={providerColor} />
+                    <Text
                       style={[
-                        styles.accountPickerChip,
-                        {
-                          backgroundColor: isActive ? theme.primary : theme.surface,
-                          borderColor: isActive ? theme.primary : theme.border,
-                        },
+                        styles.accountPickerLabel,
+                        { color: isActive ? providerColor : theme.textSecondary },
                       ]}
-                      onPress={() => { setActiveAccountId(acc.id); }}
-                      activeOpacity={0.8}
+                      numberOfLines={1}
                     >
-                      <Avatar name={acc.displayName} url={acc.avatarUrl} size={20} />
-                      <Text
-                        style={[
-                          styles.accountPickerLabel,
-                          { color: isActive ? '#fff' : theme.textSecondary },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {acc.email.split('@')[0]}
-                      </Text>
-                      {isActive && (
-                        <MaterialCommunityIcons name="check-circle" size={14} color="#fff" />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
+                      {acc.email.split('@')[0]}
+                    </Text>
+                    {isActive && (
+                      <MaterialCommunityIcons name="check-circle" size={14} color={providerColor} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </FadeInUpView>
         )}
 
@@ -381,9 +348,14 @@ export default function HomeScreen() {
         
         {accounts.map((account, index) => {
           const state = syncState[account.id];
+          const isSelected = activeAccountId === account.id;
+          const providerColor = account.provider === 'gmail' ? '#EA4335' : '#0078D4';
           return (
             <FadeInUpView delay={250 + index * 50} key={account.id}>
-              <Card style={styles.accountCard}>
+              <Card style={isSelected
+                ? [styles.accountCard, { borderWidth: 2, borderColor: providerColor }] as any
+                : styles.accountCard
+              }>
               <View style={styles.accountRow}>
                 <Avatar name={account.displayName} url={account.avatarUrl} size={44} />
                 <View style={styles.accountInfo}>
@@ -536,16 +508,11 @@ export default function HomeScreen() {
 
             {/* Custom date range */}
             <Text style={[styles.syncSectionLabel, { color: theme.textSecondary }]}>RANGO PERSONALIZADO</Text>
-            {syncFromDate > syncToDate && (
-              <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '600', marginBottom: 4 }}>
-                La fecha "Desde" no puede ser posterior a "Hasta"
-              </Text>
-            )}
-            <View style={[styles.syncDateRow, { borderColor: syncFromDate > syncToDate ? '#EF4444' : theme.border }]}>
+            <View style={[styles.syncDateRow, { borderColor: theme.border }]}>
               <TouchableOpacity style={styles.syncDateField} onPress={() => setShowFromPicker(true)}>
-                <MaterialCommunityIcons name="calendar-start" size={16} color={syncFromDate > syncToDate ? '#EF4444' : theme.primary} />
+                <MaterialCommunityIcons name="calendar-start" size={16} color={theme.primary} />
                 <Text style={[styles.syncDateLabel, { color: theme.textSecondary }]}>Desde</Text>
-                <Text style={[styles.syncDateValue, { color: syncFromDate > syncToDate ? '#EF4444' : theme.textPrimary }]}>{format(syncFromDate, 'dd/MM/yyyy')}</Text>
+                <Text style={[styles.syncDateValue, { color: theme.textPrimary }]}>{format(syncFromDate, 'dd/MM/yyyy')}</Text>
               </TouchableOpacity>
               <View style={[styles.syncDateDivider, { backgroundColor: theme.border }]} />
               <TouchableOpacity style={styles.syncDateField} onPress={() => setShowToPicker(true)}>
@@ -607,29 +574,41 @@ export default function HomeScreen() {
 
       </Modal>
 
-      {/* Date picker — DESDE */}
+      {/* DateTimePicker for FROM date - outside syncRangeModal to avoid nested modal issue on Android */}
       {showFromPicker && (
         <Modal transparent animationType="fade" onRequestClose={() => setShowFromPicker(false)}>
           <View style={styles.datePickerOverlay}>
             <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
               <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha desde</Text>
-              <DateSpinner date={syncFromDate} onChange={setSyncFromDate} />
-              {/* Presets rápidos */}
-              <Text style={[styles.syncSectionLabel, { color: theme.textSecondary, marginTop: 4 }]}>ATAJOS RÁPIDOS</Text>
+              {/* Date display */}
+              <View style={styles.datePickerManual}>
+                {['Año', 'Mes', 'Día'].map((label, idx) => {
+                  const parts = [syncFromDate.getFullYear(), syncFromDate.getMonth() + 1, syncFromDate.getDate()];
+                  return (
+                    <View key={label} style={styles.datePartCol}>
+                      <Text style={[styles.datePartLabel, { color: theme.textMuted }]}>{label}</Text>
+                      <Text style={[styles.datePartValue, { color: theme.textPrimary, borderColor: theme.border }]}>
+                        {String(parts[idx]).padStart(2, '0')}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+              {/* Quick buttons */}
               <View style={styles.datePickerPresets}>
                 {[
-                  { label: 'Última semana', days: 7 },
-                  { label: 'Últimos 30 días', days: 30 },
-                  { label: 'Últimos 3 meses', days: 90 },
-                  { label: 'Últimos 6 meses', days: 180 },
-                  { label: 'Último año', days: 365 },
+                  { label: 'Hace 1 semana', days: 7 },
+                  { label: 'Hace 30 días', days: 30 },
+                  { label: 'Hace 3 meses', days: 90 },
+                  { label: 'Hace 6 meses', days: 180 },
+                  { label: 'Hace 1 año', days: 365 },
                 ].map(p => (
                   <TouchableOpacity
                     key={p.days}
-                    style={[styles.datePresetBtn, { borderColor: theme.border, backgroundColor: theme.primarySubtle }]}
-                    onPress={() => setSyncFromDate(subDays(new Date(), p.days))}
+                    style={[styles.datePresetBtn, { borderColor: theme.border }]}
+                    onPress={() => { setSyncFromDate(subDays(new Date(), p.days)); setShowFromPicker(false); }}
                   >
-                    <Text style={[styles.datePresetText, { color: theme.primary }]}>{p.label}</Text>
+                    <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -637,22 +616,18 @@ export default function HomeScreen() {
                 style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
                 onPress={() => setShowFromPicker(false)}
               >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Confirmar</Text>
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
       )}
 
-      {/* Date picker — HASTA */}
       {showToPicker && (
         <Modal transparent animationType="fade" onRequestClose={() => setShowToPicker(false)}>
           <View style={styles.datePickerOverlay}>
             <View style={[styles.datePickerCard, { backgroundColor: theme.surface }]}>
               <Text style={[styles.datePickerTitle, { color: theme.textPrimary }]}>Fecha hasta</Text>
-              <DateSpinner date={syncToDate} onChange={setSyncToDate} />
-              {/* Presets rápidos */}
-              <Text style={[styles.syncSectionLabel, { color: theme.textSecondary, marginTop: 4 }]}>ATAJOS RÁPIDOS</Text>
               <View style={styles.datePickerPresets}>
                 {[
                   { label: 'Hoy', days: 0 },
@@ -661,10 +636,10 @@ export default function HomeScreen() {
                 ].map(p => (
                   <TouchableOpacity
                     key={p.days}
-                    style={[styles.datePresetBtn, { borderColor: theme.border, backgroundColor: theme.primarySubtle }]}
-                    onPress={() => setSyncToDate(subDays(new Date(), p.days))}
+                    style={[styles.datePresetBtn, { borderColor: theme.border }]}
+                    onPress={() => { setSyncToDate(subDays(new Date(), p.days)); setShowToPicker(false); }}
                   >
-                    <Text style={[styles.datePresetText, { color: theme.primary }]}>{p.label}</Text>
+                    <Text style={[styles.datePresetText, { color: theme.textPrimary }]}>{p.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -672,7 +647,7 @@ export default function HomeScreen() {
                 style={[styles.datePickerClose, { backgroundColor: theme.primary }]}
                 onPress={() => setShowToPicker(false)}
               >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Confirmar</Text>
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Confirmar</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -752,115 +727,6 @@ function SyncIconButton({ isSyncing, onPress }: { isSyncing: boolean; onPress: (
     </TouchableOpacity>
   );
 }
-
-/**
- * Spinner de fecha con botones ▲/▼ para cada campo (año, mes, día).
- * No requiere dependencias externas y funciona igual en iOS y Android.
- */
-function DateSpinner({ date, onChange }: { date: Date; onChange: (d: Date) => void }) {
-  const theme = useTheme();
-
-  const adjust = (field: 'year' | 'month' | 'day', delta: number) => {
-    const d = new Date(date);
-    if (field === 'year') {
-      d.setFullYear(d.getFullYear() + delta);
-    } else if (field === 'month') {
-      d.setMonth(d.getMonth() + delta);
-    } else {
-      d.setDate(d.getDate() + delta);
-    }
-    onChange(d);
-  };
-
-  const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-
-  return (
-    <View style={spinnerStyles.row}>
-      <SpinCol
-        label="AÑO"
-        value={String(date.getFullYear())}
-        onInc={() => adjust('year', 1)}
-        onDec={() => adjust('year', -1)}
-        theme={theme}
-      />
-      <View style={[spinnerStyles.divider, { backgroundColor: theme.border }]} />
-      <SpinCol
-        label="MES"
-        value={MONTHS[date.getMonth()]}
-        onInc={() => adjust('month', 1)}
-        onDec={() => adjust('month', -1)}
-        theme={theme}
-      />
-      <View style={[spinnerStyles.divider, { backgroundColor: theme.border }]} />
-      <SpinCol
-        label="DÍA"
-        value={String(date.getDate()).padStart(2, '0')}
-        onInc={() => adjust('day', 1)}
-        onDec={() => adjust('day', -1)}
-        theme={theme}
-      />
-    </View>
-  );
-}
-
-function SpinCol({
-  label, value, onInc, onDec, theme,
-}: {
-  label: string; value: string; onInc: () => void; onDec: () => void; theme: any;
-}) {
-  return (
-    <View style={spinnerStyles.col}>
-      <TouchableOpacity onPress={onInc} style={spinnerStyles.arrowBtn} hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}>
-        <MaterialCommunityIcons name="chevron-up" size={32} color={theme.primary} />
-      </TouchableOpacity>
-      <Text style={[spinnerStyles.value, { color: theme.textPrimary, borderColor: theme.primary + '50', backgroundColor: theme.primarySubtle }]}>
-        {value}
-      </Text>
-      <Text style={[spinnerStyles.fieldLabel, { color: theme.textMuted }]}>{label}</Text>
-      <TouchableOpacity onPress={onDec} style={spinnerStyles.arrowBtn} hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}>
-        <MaterialCommunityIcons name="chevron-down" size={32} color={theme.primary} />
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-const spinnerStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 8,
-    gap: 0,
-  },
-  col: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 4,
-  },
-  divider: {
-    width: 1,
-    height: 80,
-    marginHorizontal: 4,
-  },
-  arrowBtn: {
-    padding: 2,
-  },
-  value: {
-    fontSize: 22,
-    fontWeight: '700',
-    minWidth: 58,
-    textAlign: 'center',
-    borderWidth: 1.5,
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-  },
-  fieldLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-});
 
 function StatItem({ icon, label, value }: { icon: string; label: string; value: string }) {
   const theme = useTheme();
@@ -1008,17 +874,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  accountPickerRow: {
-    marginBottom: Spacing.md,
-  },
+  // Account picker
+  accountPickerScroll: { marginBottom: Spacing.lg, marginHorizontal: -Spacing.xl, paddingHorizontal: Spacing.xl },
   accountPickerChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.pill,
     borderWidth: 1.5,
+    marginRight: Spacing.sm,
   },
   accountPickerLabel: {
     ...Typography.caption,
