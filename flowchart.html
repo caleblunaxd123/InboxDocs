@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InboxDocs — Flujograma</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #F0F4FA;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    padding: 40px 30px;
+    width: 1100px;
+  }
+
+  h1 {
+    text-align: center;
+    color: #1F4E79;
+    font-size: 28px;
+    margin-bottom: 6px;
+    letter-spacing: 1px;
+  }
+  .subtitle {
+    text-align: center;
+    color: #5B8DB8;
+    font-size: 13px;
+    margin-bottom: 36px;
+    letter-spacing: 0.5px;
+  }
+
+  .flow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  /* PHASE LABELS */
+  .phase-row {
+    display: flex;
+    width: 100%;
+    gap: 12px;
+    margin-bottom: 0;
+  }
+  .phase-label {
+    width: 120px;
+    min-width: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 14px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    border-radius: 6px 0 0 6px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .phase-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* NODES */
+  .node-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 0;
+  }
+
+  .node {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 600;
+    border-radius: 10px;
+    padding: 10px 14px;
+    line-height: 1.3;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    min-height: 48px;
+    flex-shrink: 0;
+  }
+
+  .node-start {
+    background: #1F4E79;
+    color: #fff;
+    border-radius: 40px;
+    width: 160px;
+    font-size: 13px;
+    padding: 12px 20px;
+  }
+
+  .node-blue {
+    background: #2E75B6;
+    color: #fff;
+    width: 210px;
+  }
+
+  .node-teal {
+    background: #1F7A6A;
+    color: #fff;
+    width: 210px;
+  }
+
+  .node-orange {
+    background: #C25A00;
+    color: #fff;
+    width: 210px;
+  }
+
+  .node-purple {
+    background: #5B3A8A;
+    color: #fff;
+    width: 210px;
+  }
+
+  .node-gray {
+    background: #3D5A80;
+    color: #fff;
+    width: 210px;
+  }
+
+  .node-decision {
+    background: #F0A500;
+    color: #1a1a1a;
+    width: 200px;
+    border-radius: 6px;
+    transform: perspective(200px) rotateX(0deg);
+    font-size: 12px;
+  }
+
+  .node-end {
+    background: #145A32;
+    color: #fff;
+    border-radius: 40px;
+    width: 220px;
+    font-size: 13px;
+    padding: 12px 20px;
+  }
+
+  .node-sub {
+    background: #fff;
+    color: #333;
+    border: 2px solid;
+    font-size: 11.5px;
+    font-weight: 500;
+    width: 170px;
+    padding: 8px 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+
+  /* ARROWS */
+  .arrow-down {
+    display: flex;
+    justify-content: center;
+    margin: 4px 0;
+    color: #7090B0;
+    font-size: 22px;
+    line-height: 1;
+  }
+
+  .arrow-right {
+    color: #7090B0;
+    font-size: 20px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .label-yes, .label-no {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .label-yes { background: #D5F0D5; color: #1F7A3A; }
+  .label-no  { background: #FFD6D6; color: #A00; }
+
+  /* SECTION BANDS */
+  .section {
+    width: 100%;
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+    margin-bottom: 18px;
+    overflow: hidden;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 18px;
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+  }
+
+  .section-body {
+    padding: 16px 20px 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .section-body.horizontal {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    flex-wrap: wrap;
+  }
+
+  .step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0;
+  }
+
+  .step-box {
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    min-width: 145px;
+    max-width: 165px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    line-height: 1.3;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.13);
+  }
+
+  .step-note {
+    font-size: 10px;
+    color: #666;
+    margin-top: 4px;
+    max-width: 150px;
+    line-height: 1.3;
+  }
+
+  .arrow-h {
+    font-size: 20px;
+    color: #7090B0;
+    margin: 0 6px;
+    flex-shrink: 0;
+    padding-top: 0;
+    align-self: center;
+    margin-bottom: 18px;
+  }
+
+  .footer-note {
+    text-align: center;
+    color: #888;
+    font-size: 11px;
+    margin-top: 10px;
+    letter-spacing: 0.3px;
+  }
+
+  /* LEGEND */
+  .legend {
+    display: flex;
+    gap: 18px;
+    justify-content: center;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #444;
+  }
+  .legend-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>InboxDocs</h1>
+<div class="subtitle">Flujograma de la Aplicacion — Flujo Completo del Usuario</div>
+
+<!-- INICIO -->
+<div class="section">
+  <div class="section-header" style="background:#1F4E79;">
+    <span>🚀</span> INICIO — Primer Uso
+  </div>
+  <div class="section-body horizontal">
+    <div class="step">
+      <div class="step-box" style="background:#1F4E79;">Abrir App</div>
+      <div class="step-note">Inicio de sesion biometrico si esta activado</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#2E75B6;">Walkthrough</div>
+      <div class="step-note">Solo primera vez. Se omite si ya fue visto</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#2E75B6;">Conectar Cuenta</div>
+      <div class="step-note">Gmail u Outlook via OAuth (sin contrasena)</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#2E75B6;">Seleccionar Rango</div>
+      <div class="step-note">30 dias hasta 5 anos de historial</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#145A32;">Dashboard Principal</div>
+      <div class="step-note">App lista para usar</div>
+    </div>
+  </div>
+</div>
+
+<!-- SINCRONIZACION -->
+<div class="section">
+  <div class="section-header" style="background:#1F7A6A;">
+    <span>🔄</span> SINCRONIZACION — Automatica o Manual
+  </div>
+  <div class="section-body horizontal">
+    <div class="step">
+      <div class="step-box" style="background:#1F7A6A;">Disparador de Sync</div>
+      <div class="step-note">Al abrir app, programado (6h/12h/diario) o manual</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#1F7A6A;">Renovar Token OAuth</div>
+      <div class="step-note">Refresco automatico si expira en menos de 5 min</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#1F7A6A;">Obtener Emails con Adjuntos</div>
+      <div class="step-note">Gmail API / Microsoft Graph. Solo correos con archivos</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#1F7A6A;">Descargar Adjuntos</div>
+      <div class="step-note">Respeta filtros de tipo y tamano. Evita duplicados</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#1F7A6A;">Guardar en SQLite + Disco</div>
+      <div class="step-note">Metadatos en DB, archivo en sistema local del dispositivo</div>
+    </div>
+  </div>
+</div>
+
+<!-- IA + SUNAT -->
+<div class="section">
+  <div class="section-header" style="background:#5B3A8A;">
+    <span>🤖</span> PROCESAMIENTO — Categorizacion e Inteligencia
+  </div>
+  <div class="section-body horizontal">
+    <div class="step">
+      <div class="step-box" style="background:#5B3A8A;">Detectar Tipo de Archivo</div>
+      <div class="step-note">PDF, XML, Excel, imagen, etc.</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#C25A00;">Es XML SUNAT?</div>
+      <div class="step-note">Formato UBL 2.1 peruano</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#1F7A6A;">SI: Parser SUNAT</div>
+      <div class="step-note">Extrae RUC, serie, totales, lineas, IGV</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;margin: 0 6px;align-self:center;margin-bottom:18px;">
+      <span style="font-size:10px;color:#A00;font-weight:700;">NO</span>
+      <span style="font-size:18px;color:#7090B0;">↓</span>
+    </div>
+    <div class="step">
+      <div class="step-box" style="background:#5B3A8A;">Categorizar con IA</div>
+      <div class="step-note">GPT-4o-mini o heuristicas de palabras clave</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#145A32;">Documento Listo</div>
+      <div class="step-note">Categorizado y disponible en el repositorio</div>
+    </div>
+  </div>
+</div>
+
+<!-- GESTION DIARIA -->
+<div class="section">
+  <div class="section-header" style="background:#3D5A80;">
+    <span>📋</span> GESTION DIARIA — Las 5 Secciones de la App
+  </div>
+  <div class="section-body horizontal" style="align-items:flex-start; gap: 10px;">
+
+    <div class="step" style="flex:1; min-width:150px;">
+      <div class="step-box" style="background:#1F4E79; width:100%; max-width:none;">🏠 Inicio</div>
+      <div class="step-note" style="max-width:none;">Dashboard con cuentas, documentos recientes, destacados y stats. Trigger de sync manual</div>
+    </div>
+
+    <div class="step" style="flex:1; min-width:150px;">
+      <div class="step-box" style="background:#2E75B6; width:100%; max-width:none;">📬 Bandeja</div>
+      <div class="step-note" style="max-width:none;">Smart Inbox: previsualiza correos sin descargar. Descarga selectiva con filtros de fecha/extension</div>
+    </div>
+
+    <div class="step" style="flex:1; min-width:150px;">
+      <div class="step-box" style="background:#1F7A6A; width:100%; max-width:none;">📁 Documentos</div>
+      <div class="step-note" style="max-width:none;">Repositorio completo. Busqueda, filtros por categoria/fecha/tipo, detalle de factura, export Excel</div>
+    </div>
+
+    <div class="step" style="flex:1; min-width:150px;">
+      <div class="step-box" style="background:#5B3A8A; width:100%; max-width:none;">📊 Estadisticas</div>
+      <div class="step-note" style="max-width:none;">Graficos: distribucion por categoria, tendencias mensuales, top emisores, resumen IGV SUNAT</div>
+    </div>
+
+    <div class="step" style="flex:1; min-width:150px;">
+      <div class="step-box" style="background:#3D5A80; width:100%; max-width:none;">⚙️ Ajustes</div>
+      <div class="step-note" style="max-width:none;">Cuentas, sync programado, API key IA, biometria, tema, exportar datos, borrar todo</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- SEGURIDAD Y DATOS -->
+<div class="section">
+  <div class="section-header" style="background:#7B3F00;">
+    <span>🔒</span> SEGURIDAD — Privacidad y Datos
+  </div>
+  <div class="section-body horizontal">
+    <div class="step">
+      <div class="step-box" style="background:#7B3F00;">Tokens OAuth Cifrados</div>
+      <div class="step-note">expo-secure-store. Nunca en texto plano</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#7B3F00;">Datos 100% Locales</div>
+      <div class="step-note">SQLite + sistema de archivos del telefono</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#7B3F00;">Bloqueo Biometrico</div>
+      <div class="step-note">Face ID / Huella al reanudar la app</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#7B3F00;">Sin Servidor Propio</div>
+      <div class="step-note">Ningun documento sale del dispositivo</div>
+    </div>
+    <div class="arrow-h">→</div>
+    <div class="step">
+      <div class="step-box" style="background:#7B3F00;">Exportar o Borrar</div>
+      <div class="step-note">El usuario controla sus datos en todo momento</div>
+    </div>
+  </div>
+</div>
+
+<!-- LEGEND -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#1F4E79;"></div> Inicio / Dashboard</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2E75B6;"></div> Autenticacion</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#1F7A6A;"></div> Sincronizacion</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#5B3A8A;"></div> IA / Procesamiento</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#C25A00;"></div> Logica SUNAT</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#7B3F00;"></div> Seguridad</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#145A32;"></div> Resultado Final</div>
+</div>
+
+<div class="footer-note" style="margin-top:18px;">InboxDocs — Flujograma de la Aplicacion — Marzo 2026</div>
+
+</body>
+</html>
